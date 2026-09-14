@@ -34,6 +34,7 @@ def test_pack_fits_15_lines(repo, capsys):
     )
     lines = out.rstrip().splitlines()
     assert len(lines) <= 15 and lines[0].startswith("HEAD ") and "STOP" in lines[-1]
+    assert "… and" not in out
 
 
 def test_cache_hit_skips_parse(repo, capsys):
