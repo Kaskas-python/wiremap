@@ -17,7 +17,8 @@
 ## Definition of done
 
 - The task's Verify line passes and its output is in the report.
-- `uv run pytest -q` passes (5 tests once Phase 5 lands; never fewer than before the task).
+- `uv run pytest -q` passes (the tests in the plan's Test budget tables; never fewer than
+  before the task).
 - CI (`.github/workflows/ci.yml`, Python 3.10–3.13) is green after push.
 - A new command or flag appears in `cli.py`, the README command table and, if agents use
   it, `skills/wiremap/SKILL.md` in the same change.
