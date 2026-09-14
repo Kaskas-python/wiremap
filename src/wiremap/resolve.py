@@ -3,7 +3,7 @@ from collections import Counter
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from wiremap.discover import RepoError, files
+from wiremap.discover import EXTS, RepoError, files
 from wiremap.parse import RawEdge, Symbol, load_or_parse
 
 
@@ -23,14 +23,22 @@ class Graph:
     edges: list[Edge]
     unresolved: dict[str, int]
     stats: dict[str, int]
+    ambiguous: dict[str, list[str]]
 
 
-def index(symbols: list[Symbol]) -> tuple[dict[str, Symbol], dict[str, list[str]]]:
+def _lang_of(file: str) -> str:
+    return EXTS[Path(file).suffix]
+
+
+def index(
+    symbols: list[Symbol],
+) -> tuple[dict[str, Symbol], dict[tuple[str, str], list[str]]]:
     by_id = {s.id: s for s in symbols}
-    by_name: dict[str, list[str]] = {}
+    by_name: dict[tuple[str, str], list[str]] = {}
     for s in symbols:
-        if s.id not in by_name.setdefault(s.name, []):
-            by_name[s.name].append(s.id)
+        key = (_lang_of(s.file), s.name)
+        if s.id not in by_name.setdefault(key, []):
+            by_name[key].append(s.id)
     return by_id, by_name
 
 
@@ -39,7 +47,7 @@ def _resolve(
     module: str,
     imports: dict[str, str],
     by_id: dict[str, Symbol],
-    by_name: dict[str, list[str]],
+    by_name: dict[tuple[str, str], list[str]],
     unresolved: dict[str, int],
 ) -> tuple[str, str] | None:
     t = raw.target_text.split(".")[-1]
@@ -47,7 +55,7 @@ def _resolve(
         return cand, "EXTRACTED"
     if t in imports and imports[t] in by_id:
         return imports[t], "EXTRACTED"
-    ids = by_name.get(t, [])
+    ids = by_name.get((_lang_of(raw.file), t), [])
     if len(ids) == 1:
         return ids[0], "INFERRED"
     if len(ids) > 1:
@@ -69,8 +77,7 @@ _FRAMEWORK_KINDS = (
 )
 
 
-def build(root: Path, stats: bool = False) -> Graph:
-    # ponytail: stats always collected; flag kept for the CLI contract
+def build(root: Path) -> Graph:
     syms: list[Symbol] = []
     raws: list[RawEdge] = []
     hits = failed = 0
@@ -90,7 +97,7 @@ def build(root: Path, stats: bool = False) -> Graph:
         raise RepoError(f"{failed}/{n_files} files failed to parse")
 
     by_id, by_name = index(syms)
-    edges, unresolved, labels = [], {}, {}
+    edges, unresolved, labels, ambiguous = [], {}, {}, {}
     imports: dict[str, dict[str, str]] = {}
     for raw in raws:
         if raw.kind == "imports":
@@ -110,7 +117,7 @@ def build(root: Path, stats: bool = False) -> Graph:
             dst = raw.target_text[5:]
             conf = "EXTRACTED"
         elif raw.target_text.startswith("node:"):
-            label, name = raw.target_text[5:].split("=", 1)
+            label, name = raw.target_text[5:].rsplit("=", 1)
             r = _resolve(
                 replace(raw, target_text=name),
                 module_of(raw.file),
@@ -121,12 +128,22 @@ def build(root: Path, stats: bool = False) -> Graph:
             )
             dst, conf = r if r else (None, None)
             if dst:
-                labels[label] = dst
+                labels[(raw.file, label)] = dst
         elif raw.target_text.startswith("label:"):
-            a, b = raw.target_text[6:].split("->")
-            dst = labels.get(b) or (by_name.get(b) or [None])[0]
-            conf = "EXTRACTED" if b in labels else "INFERRED"
-            src = labels.get(a, raw.src)
+            a, b = raw.target_text[6:].split("->", 1)
+            if (raw.file, b) in labels:
+                dst, conf = labels[(raw.file, b)], "EXTRACTED"
+            else:
+                r = _resolve(
+                    replace(raw, target_text=b),
+                    module_of(raw.file),
+                    imports_for(raw.file),
+                    by_id,
+                    by_name,
+                    unresolved,
+                )
+                dst, conf = r if r else (None, None)
+            src = labels.get((raw.file, a), raw.src)
         else:
             r = _resolve(
                 raw,
@@ -137,6 +154,10 @@ def build(root: Path, stats: bool = False) -> Graph:
                 unresolved,
             )
             dst, conf = r if r else (None, None)
+            if r is None:
+                t = raw.target_text.split(".")[-1]
+                if len(by_name.get((_lang_of(raw.file), t), [])) > 1:
+                    ambiguous.setdefault(raw.src, []).append(t)
         if dst:
             edges.append(Edge(src, dst, raw.kind, conf, raw.file, raw.line))
 
@@ -146,4 +167,5 @@ def build(root: Path, stats: bool = False) -> Graph:
         edges,
         unresolved,
         {"files": n_files, "cache_hits": hits, "failed": failed, **rule_counts},
+        ambiguous,
     )

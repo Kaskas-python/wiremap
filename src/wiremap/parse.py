@@ -1,6 +1,7 @@
 import functools
 import hashlib
 import json
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -50,20 +51,14 @@ def _query(lang: str, text: str | None = None) -> Query:
     return Query(_LANGS[lang], text)
 
 
-def captures(lang: str, src: bytes, text: str | None = None) -> dict[str, list[Node]]:
-    tree = Parser(_LANGS[lang]).parse(src)
-    return QueryCursor(_query(lang, text)).captures(tree.root_node)
-
-
 _CLASS_TYPES = ("class_definition", "class_declaration")
 _QUOTES = "\"'"
 
 
-def matches(lang: str, src: bytes, text: str | None = None) -> list[dict[str, Node]]:
-    tree = Parser(_LANGS[lang]).parse(src)
+def matches(lang: str, node: Node, text: str | None = None) -> list[dict[str, Node]]:
     return [
         {k: v[0] for k, v in m.items()}
-        for _, m in QueryCursor(_query(lang, text)).matches(tree.root_node)
+        for _, m in QueryCursor(_query(lang, text)).matches(node)
     ]
 
 
@@ -82,7 +77,10 @@ def parse_file(path: Path, root: Path, lang: str) -> tuple[list[Symbol], list[Ra
     src = path.read_bytes()
     rel = str(path.relative_to(root))
     module = rel.rsplit(".", 1)[0].replace("/", ".")
-    ms = matches(lang, src)
+    root_node = Parser(_LANGS[lang]).parse(src).root_node
+    if root_node.has_error:
+        print(f"warning: {rel}: syntax errors, partial parse", file=sys.stderr)
+    ms = matches(lang, root_node)
 
     defs: list[tuple[Node, str]] = []
     kinds: list[str] = []
@@ -150,7 +148,7 @@ def parse_file(path: Path, root: Path, lang: str) -> tuple[list[Symbol], list[Ra
         return next(q for d, q in defs if (d.start_byte, d.end_byte) == span)
 
     for r in (r for r in RULES if r.language == lang):
-        for m in matches(lang, src, r.query):
+        for m in matches(lang, root_node, r.query):
             anchor = m.get("self") or m.get("target") or m.get("label") or m.get("a")
             q = (
                 qualname_of(m["self"])
@@ -180,7 +178,15 @@ def parse_file(path: Path, root: Path, lang: str) -> tuple[list[Symbol], list[Ra
     return symbols, edges
 
 
-SCHEMA = 1
+SCHEMA = hashlib.sha1(
+    (
+        "".join(r.query for r in RULES)
+        + "".join(
+            (Path(__file__).parent / "queries" / f).read_text()
+            for f in ("python.scm", "typescript.scm")
+        )
+    ).encode()
+).hexdigest()[:12]
 
 
 def cache_dir(root: Path) -> Path:
@@ -196,7 +202,9 @@ def load_or_parse(
     path: Path, root: Path, lang: str
 ) -> tuple[list[Symbol], list[RawEdge], bool]:
     src = path.read_bytes()
-    entry = cache_dir(root) / f"{hashlib.sha1(src).hexdigest()}.json"
+    rel = str(path.relative_to(root))
+    key = hashlib.sha1(rel.encode() + b"\0" + src).hexdigest()
+    entry = cache_dir(root) / f"{key}.json"
     if entry.exists():
         try:
             d = json.loads(entry.read_text())
