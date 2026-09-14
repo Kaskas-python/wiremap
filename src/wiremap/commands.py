@@ -1,10 +1,11 @@
 import json
 import subprocess
+import time
 from collections import defaultdict
 from pathlib import Path
 
 from wiremap.discover import head_stamp
-from wiremap.parse import Symbol
+from wiremap.parse import Symbol, cache_dir
 from wiremap.resolve import Graph
 
 CAP = 40
@@ -117,15 +118,18 @@ def _enclosing_symbol(g: Graph, file: str, line: int) -> str | None:
 
 def grep(g: Graph, root: Path, pattern: str) -> tuple[str, int]:
     try:
-        out = subprocess.run(
+        proc = subprocess.run(
             ["rg", "-n", "--json", pattern],
             cwd=root,
             capture_output=True,
             text=True,
             check=False,
-        ).stdout
+        )
     except FileNotFoundError:
         return "rg (ripgrep) is required for grep", 2
+    if proc.returncode == 2:
+        return proc.stderr.strip(), 2
+    out = proc.stdout
     hits = [
         (
             m["data"]["path"]["text"],
@@ -185,3 +189,28 @@ def pack(g: Graph, root: Path, files: list[str], task: str | None = None) -> str
             break
         body = [line for line in body if line not in drop]
     return "\n".join(head + body + [STOP])
+
+
+def install_skill() -> str:
+    src = next(
+        p
+        for p in (
+            Path(__file__).parent / "skills" / "wiremap" / "SKILL.md",
+            Path(__file__).parents[2] / "skills" / "wiremap" / "SKILL.md",
+        )
+        if p.exists()
+    )
+    dst = Path.home() / ".claude" / "skills" / "wiremap" / "SKILL.md"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_bytes(src.read_bytes())
+    return f"installed {dst}"
+
+
+def cache_prune(root: Path, days: int = 30) -> str:
+    cutoff = time.time() - days * 86400
+    n = 0
+    for p in cache_dir(root).glob("*.json"):
+        if p.stat().st_mtime < cutoff:
+            p.unlink()
+            n += 1
+    return f"pruned {n} entries"

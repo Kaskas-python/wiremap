@@ -13,5 +13,6 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/wiremap"]
+force-include = {"skills/wiremap/SKILL.md" = "wiremap/skills/wiremap/SKILL.md"}
 [dependency-groups]
 dev = ["pytest>=8"]
