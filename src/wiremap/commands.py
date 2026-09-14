@@ -78,10 +78,13 @@ def deps(g: Graph, root: Path, target: str, depth: int = 1) -> tuple[str, int]:
         frontier = nxt
     rows.sort(key=lambda r: ("INFERRED" in r, r))
     rows = _cap(rows) or ["no deps found"]
+    amb = {n for i in start for n in g.ambiguous.get(i, [])}
+    rows.append(f"unresolved: {len(amb)}")
     involved = {g.symbols[i].file for i in start | seen if i in g.symbols}
     notices = []
     for file in sorted(involved):
-        for ln, line in enumerate((root / file).read_text().splitlines(), 1):
+        text = (root / file).read_text(encoding="utf-8", errors="replace")
+        for ln, line in enumerate(text.splitlines(), 1):
             if any(p in line for p in _DYNAMIC):
                 notices.append(f"dynamic dispatch present at {file}:{ln}")
     return "\n".join(rows + _cap(notices)), 0
@@ -99,12 +102,31 @@ def entrypoints(g: Graph) -> str:
     return "\n".join(_cap(body) or ["no entry points found"])
 
 
-def skeleton(g: Graph, paths: list[str]) -> str:
+def _rel(root: Path, p: str) -> str | None:
+    q = (
+        Path(p)
+        if Path(p).is_absolute()
+        else (root / p if (root / p).is_file() else Path.cwd() / p)
+    )
+    try:
+        rel = q.resolve().relative_to(root.resolve())
+    except ValueError:
+        return None
+    return str(rel) if q.is_file() else None
+
+
+def skeleton(g: Graph, root: Path, paths: list[str]) -> tuple[str, int]:
+    rels = []
+    for p in paths:
+        rel = _rel(root, p)
+        if rel is None:
+            return f"not found: {p}", 1
+        rels.append(rel)
     rows = []
     for s in sorted(g.symbols.values(), key=lambda s: (s.file, s.line_start)):
-        if s.file in paths:
+        if s.file in rels:
             rows.append("  " * s.qualname.count(".") + s.signature)
-    return "\n".join(rows or ["no symbols in given files"])
+    return "\n".join(_cap(rows) or ["no symbols in given files"]), 0
 
 
 def _enclosing_symbol(g: Graph, file: str, line: int) -> str | None:
@@ -163,32 +185,39 @@ def _symbols_in(g: Graph, file: str) -> list[Symbol]:
     )
 
 
-def pack(g: Graph, root: Path, files: list[str], task: str | None = None) -> str:
+def pack(
+    g: Graph, root: Path, files: list[str], task: str | None = None
+) -> tuple[str, int]:
+    rels = []
+    for p in files:
+        rel = _rel(root, p)
+        if rel is None:
+            return f"not found: {p}", 1
+        rels.append(rel)
     head = [f"HEAD {head_stamp(root)}"] + ([f"task: {task}"] if task else [])
     ep = [
         line
         for line in entrypoints(g).splitlines()
-        if any(line.startswith(_id_prefix(f)) for f in files)
+        if any(line.startswith(_id_prefix(f)) for f in rels)
     ]
-    fl = [f"files: {', '.join(files)}"]
+    fl = [f"files: {', '.join(rels)}"]
     ca = [
         f"caller: {r}"
-        for f in files
+        for f in rels
         for s in _symbols_in(g, f)
         for r in callers(g, s.id)[0].splitlines()
         if "  " in r and not r.startswith("unresolved")
     ]
     sk = [
         ln
-        for ln in skeleton(g, files).splitlines()
+        for ln in skeleton(g, root, rels)[0].splitlines()
         if ln != "no symbols in given files"
     ]
-    body = ep + fl + ca + sk
-    for drop in (sk, ca, ep):
-        if len(head) + len(body) + 1 <= 15:
-            break
-        body = [line for line in body if line not in drop]
-    return "\n".join(head + body + [STOP])
+    sections = [ep, fl, ca, sk]
+    for sec in (sk, ca, ep):
+        while len(head) + sum(map(len, sections)) + 1 > 15 and sec:
+            sec.pop()
+    return "\n".join(head + [ln for s in sections for ln in s] + [STOP]), 0
 
 
 def install_skill() -> str:

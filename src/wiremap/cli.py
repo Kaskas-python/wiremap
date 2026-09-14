@@ -80,7 +80,7 @@ def main(argv=None) -> int:
         return EXIT_ERROR
 
     if args.cmd == "skeleton":
-        text, code = skeleton(g, args.paths), EXIT_OK
+        text, code = skeleton(g, root, args.paths)
     elif args.cmd == "callers":
         text, code = callers(g, args.symbol, args.depth, args.min_confidence.upper())
     elif args.cmd == "deps":
@@ -88,7 +88,7 @@ def main(argv=None) -> int:
     elif args.cmd == "grep":
         text, code = grep(g, root, args.pattern)
     elif args.cmd == "pack":
-        text, code = pack(g, root, args.files, args.task), EXIT_OK
+        text, code = pack(g, root, args.files, args.task)
     else:
         text, code = entrypoints(g), EXIT_OK
 
