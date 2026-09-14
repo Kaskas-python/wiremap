@@ -39,7 +39,7 @@ def test_pack_fits_15_lines(repo, capsys):
 def test_cache_hit_skips_parse(repo, capsys):
     run(capsys, "--repo", str(repo), "--stats", "entrypoints")
     _, err, _ = run(capsys, "--repo", str(repo), "--stats", "entrypoints")
-    assert "cache_hits=9" in err
+    assert "cache_hits=11" in err
 
 
 def test_language_dropin(repo, capsys):
@@ -47,3 +47,12 @@ def test_language_dropin(repo, capsys):
     assert "svc.main.main  calls  EXTRACTED" in out
     out, _, _ = run(capsys, "--repo", str(repo), "callers", "lib.core.helper")
     assert "lib.core.run  calls  EXTRACTED" in out
+
+
+def test_cross_artifact_edges(repo, capsys):
+    out, _, _ = run(capsys, "--repo", str(repo), "deps", "app.db.Order")
+    assert "sql:orders  table_ref  EXTRACTED" in out
+    out, _, _ = run(capsys, "--repo", str(repo), "callers", "app.api.list_orders")
+    assert "docs.arch  mentions  INFERRED" in out
+    out, _, _ = run(capsys, "--repo", str(repo), "callers", "sql:orders")
+    assert "app.api.list_orders  table_ref  INFERRED" in out

@@ -10,6 +10,7 @@ FILES = {
         "class Customer:\n"
         "    pass\n"
         "class Order:\n"
+        '    __tablename__ = "orders"\n'
         '    customer = relationship("Customer")\n'
     ),
     "app/api.py": (
@@ -18,7 +19,7 @@ FILES = {
         "router = APIRouter()\n"
         '@router.get("/orders")\n'
         "def list_orders(db=Depends(get_db)):\n"
-        "    return []\n"
+        '    return db.execute("SELECT * FROM orders")\n'
         "def get():\n"
         "    return 1\n"
     ),
@@ -54,6 +55,10 @@ FILES = {
         "package main\nfunc helper() int { return 1 }\nfunc main() { helper() }\n"
     ),
     "lib/core.rs": ("fn helper() -> i32 { 1 }\nfn run() { helper(); }\n"),
+    "db/schema.sql": (
+        "CREATE TABLE orders (id int);\nCREATE TABLE customers (id int);\n"
+    ),
+    "docs/arch.md": "# Arch\n`list_orders` reads `orders`.\n",
 }
 
 
