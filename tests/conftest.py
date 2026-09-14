@@ -64,6 +64,8 @@ FILES = {
         "CREATE TABLE orders (id int);\nCREATE TABLE customers (id int);\n"
     ),
     "docs/arch.md": "# Arch\n`list_orders` reads `orders`.\n",
+    "src/pkg/a.py": "def f():\n    return 1\n",
+    "src/pkg/b.py": "from pkg.a import f\ndef g():\n    return f()\n",
 }
 
 

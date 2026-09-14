@@ -1,3 +1,11 @@
+import io
+import json
+import shutil
+import subprocess
+import sys
+
+import pytest
+
 from wiremap.cli import main
 
 
@@ -40,7 +48,7 @@ def test_pack_fits_15_lines(repo, capsys):
 def test_cache_hit_skips_parse(repo, capsys):
     run(capsys, "--repo", str(repo), "--stats", "entrypoints")
     _, err, _ = run(capsys, "--repo", str(repo), "--stats", "entrypoints")
-    assert "cache_hits=11" in err
+    assert "cache_hits=14" in err
 
 
 def test_language_dropin(repo, capsys):
@@ -48,6 +56,8 @@ def test_language_dropin(repo, capsys):
     assert "svc.main.main  calls  EXTRACTED" in out
     out, _, _ = run(capsys, "--repo", str(repo), "callers", "lib.core.helper")
     assert "lib.core.run  calls  EXTRACTED" in out
+    out, _, _ = run(capsys, "--repo", str(repo), "callers", "pkg.a.f")
+    assert "pkg.b.g  calls  EXTRACTED" in out
 
 
 def test_cross_artifact_edges(repo, capsys):
@@ -57,3 +67,95 @@ def test_cross_artifact_edges(repo, capsys):
     assert "docs.arch  mentions  INFERRED" in out
     out, _, _ = run(capsys, "--repo", str(repo), "callers", "sql:orders")
     assert "app.api.list_orders  table_ref  INFERRED" in out
+
+
+def test_workspace_prefixes_ids(repo, capsys):
+    b = repo / "b"
+    b.mkdir()
+    (b / "other.py").write_text("def caller():\n    list_orders()\n")
+    subprocess.run(["git", "-C", str(b), "init", "-q"], check=True)
+    out, _, _ = run(
+        capsys, "--repo", str(repo), "--repo", str(b), "callers", "list_orders"
+    )
+    assert "b:other.caller  calls  INFERRED" in out
+    out, _, _ = run(capsys, "--repo", str(repo), "--repo", str(b), "entrypoints")
+    assert f"{repo.name}:app.api.list_orders" in out
+
+
+@pytest.mark.skipif(
+    shutil.which("pyright-langserver") is None, reason="pyright not installed"
+)
+def test_lsp_upgrades_confidence(repo, capsys):
+    out, _, _ = run(capsys, "--repo", str(repo), "callers", "app.db.Order.total")
+    assert "app.svc.load  calls  INFERRED" in out
+    out, _, _ = run(
+        capsys, "--repo", str(repo), "--lsp", "callers", "app.db.Order.total"
+    )
+    assert "app.svc.load  calls  EXTRACTED" in out
+
+
+def test_summarize_roundtrip(repo, capsys, monkeypatch):
+    monkeypatch.setattr(sys, "stdin", io.StringIO("one\ntwo\n"))
+    _, _, code = run(capsys, "--repo", str(repo), "summarize", "--write", "app/api.py")
+    assert code == 0
+    out, _, _ = run(capsys, "--repo", str(repo), "summarize", "--files", "app/api.py")
+    assert "## app/api.py" in out and "one" in out
+    (repo / "app/api.py").write_text((repo / "app/api.py").read_text() + "\n")
+    out, _, _ = run(capsys, "--repo", str(repo), "summarize", "--files", "app/api.py")
+    assert "no summary yet" in out
+
+
+def test_communities_and_graph(repo, capsys, tmp_path, tmp_path_factory):
+    out, _, _ = run(capsys, "--repo", str(repo), "communities")
+    row = next(r for r in out.splitlines() if "app.graph.classify" in r)
+    assert "app.graph.route_fn" in row
+    out, _, _ = run(capsys, "--repo", str(repo), "graph", "--files", "app/graph.py")
+    assert out.startswith("graph LR")
+    out, _, _ = run(
+        capsys, "--repo", str(repo), "graph", "--files", "app/graph.py",
+        "--format", "dot",
+    )
+    assert out.startswith("digraph")
+    html = tmp_path / "out.html"
+    run(capsys, "--repo", str(repo), "graph", "--html", str(html))
+    t = html.read_text()
+    assert "<canvas" in t and "app.graph.handle" in t
+    out, _, _ = run(capsys, "--repo", str(repo), "report")
+    assert "## Hubs" in out
+    out, _, _ = run(capsys, "--repo", str(repo), "ask", "list orders")
+    assert out.splitlines()[0].startswith("app.api.list_orders")
+    vault = tmp_path_factory.mktemp("vault")
+    run(capsys, "--repo", str(repo), "export", "--obsidian", str(vault))
+    assert "## Called by" in (vault / "app/graph.py.md").read_text()
+
+
+def test_triage_lists_changed_callers(repo, capsys):
+    p = repo / "app/db.py"
+    p.write_text(
+        p.read_text().replace(
+            "    yield None\n", "    yield None\n    return None\n"
+        )
+    )
+    out, _, _ = run(capsys, "--repo", str(repo), "triage")
+    assert "app/api.py" in out
+
+
+def test_hook_post_edit_capped(repo, capsys, monkeypatch):
+    payload = json.dumps({"tool_input": {"file_path": str(repo / "app/db.py")}})
+    monkeypatch.setattr(sys, "stdin", io.StringIO(payload))
+    out, _, code = run(capsys, "--repo", str(repo), "hook", "post-edit")
+    assert code == 0
+    assert "get_db <- app.api.list_orders" in out
+    assert len(out.splitlines()) <= 22
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+    out, _, code = run(capsys, "--repo", str(repo), "hook", "post-edit")
+    assert code == 0 and out.strip() == ""
+
+
+def test_status_reads_stats_only(repo, capsys):
+    out, _, _ = run(capsys, "--repo", str(repo), "status")
+    assert out.strip() == ""
+    run(capsys, "--repo", str(repo), "entrypoints")
+    out, _, _ = run(capsys, "--repo", str(repo), "status")
+    assert out.startswith("wiremap ")
+

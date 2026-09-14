@@ -8,3 +8,5 @@ description: Answer "where is this called", "what depends on this", "blast radiu
 3. When writing a brief: `wiremap --repo <root> pack --files <paths> --task "<one line>"` and paste the output verbatim as the context pack.
 4. When reviewing: `wiremap callers` on every changed public symbol; check each caller against the diff.
 5. The tool never outranks the code: on any contradiction, STOP and report BLOCKED.
+6. Reviewing a branch: `wiremap triage --base <target>` first; every listed file is read.
+7. Unfamiliar file and the skeleton is not enough: `wiremap summarize --files <path>`; if it says no summary yet, read the file and store your own ≤ 10-line note with `wiremap summarize --write <path>` (stdin) so the next agent gets it free.

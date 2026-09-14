@@ -1,17 +1,21 @@
+import json
+import os
 import sys
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from wiremap.discover import EXTS, RepoError, files
+from wiremap.discover import EXTS, RepoError, files, head_stamp
 from wiremap.lsp import SERVERS, Lsp
 from wiremap.parse import (
     LANG_SPECS,
     TEXT_LANGS,
     RawEdge,
     Symbol,
+    cache_dir,
     language,
     load_or_parse,
+    module_of,
 )
 
 
@@ -86,10 +90,6 @@ def _resolve(
     if len(ids) > 1:
         unresolved[t] = len(ids)
     return None
-
-
-def module_of(file: str) -> str:
-    return file.rsplit(".", 1)[0].replace("/", ".")
 
 
 _FRAMEWORK_KINDS = (
@@ -226,6 +226,25 @@ def build(root: Path, lsp: bool = False, dangling: bool = False) -> Graph:
         stats["lsp_upgraded"] = refine_with_lsp(
             root, edges, pairs, {(s.file, s.line_start): s.id for s in syms}
         )
+    p = cache_dir(root) / "last_stats.json"
+    tmp = p.with_name(f"{p.stem}.{os.getpid()}.tmp")
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(
+            json.dumps(
+                {
+                    "files": n_files,
+                    "edges": len(edges),
+                    "unresolved": sum(unresolved.values()),
+                    "stamp": head_stamp(root),
+                }
+            )
+        )
+        tmp.replace(p)
+    except OSError:
+        # ponytail: the statusline cache is best-effort, same as the parse cache;
+        # a failed write only means `status` prints nothing
+        pass
     return Graph(by_id, edges, unresolved, stats, ambiguous, dangling_raws)
 
 

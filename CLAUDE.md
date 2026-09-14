@@ -1,10 +1,12 @@
 # wiremap
 
 Framework-aware code context for AI coding agents. A stateless CLI (`uv tool install wiremap`)
-run from any git checkout or worktree: parses Python and TypeScript with tree-sitter into an
-in-memory graph on every call (symbols, imports, calls, plus framework edges for FastAPI,
-LangGraph, SQLAlchemy and Celery) and answers `callers`, `deps`, `skeleton`, `grep`,
-`entrypoints` and `pack`. Only a per-file parse cache persists, under `~/.cache/wiremap/`.
+run from any git checkout or worktree: parses Python, TypeScript, Go and Rust with tree-sitter,
+plus SQL schemas and Markdown docs, into an in-memory graph on every call (symbols, imports,
+calls, plus framework edges for FastAPI, LangGraph, SQLAlchemy and Celery) and answers
+`callers`, `deps`, `skeleton`, `grep`, `entrypoints`, `pack`, `communities`, `graph`, `export`,
+`report`, `ask`, `triage`, `hook`, `status` and `summarize`. Persisted state lives only under
+`~/.cache/wiremap/`: parse entries, summaries, last stats.
 
 Stack: Python ≥ 3.10 · uv · hatchling · tree-sitter (exact pins) · pytest. Public repo
 `Kaskas-python/wiremap`, MIT, PyPI name `wiremap`.
@@ -22,7 +24,7 @@ Stack: Python ≥ 3.10 · uv · hatchling · tree-sitter (exact pins) · pytest.
 1. **The plan is the spec.** Every task is a numbered entry in the plan doc with a code
    snippet and a Verify line. Implement the snippet's shape; touch nothing the task does not
    name. Contradiction between plan and code → STOP, report BLOCKED.
-2. **Module map is fixed.** `src/wiremap/{cli,discover,parse,frameworks,resolve,commands,lsp,llm}.py`,
+2. **Module map is fixed.** `src/wiremap/{cli,discover,parse,frameworks,resolve,commands,lsp}.py`,
    `src/wiremap/viewer.html` plus `queries/*.scm`. No new modules, packages or config files
    without a plan change.
 3. **Comments only as `# ponytail:` markers** naming a deliberate shortcut and its upgrade

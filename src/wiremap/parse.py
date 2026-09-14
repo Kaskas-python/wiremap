@@ -91,6 +91,12 @@ _TABLENAME = re.compile(r"__tablename__\s*=\s*[\"'](\w+)[\"']")
 TEXT_LANGS = {"sql", "markdown"}
 
 
+def module_of(rel: str) -> str:
+    # ponytail: strips a leading src/ (pypa src layout);
+    # upgrade: read [tool.setuptools]/[tool.hatch] source roots
+    return rel.removeprefix("src/").rsplit(".", 1)[0].replace("/", ".")
+
+
 def _table(name: str, rel: str, i: int, sig: str) -> Symbol:
     n = name.lower()
     return Symbol(
@@ -109,7 +115,7 @@ def parse_text_file(
     path: Path, root: Path, lang: str
 ) -> tuple[list[Symbol], list[RawEdge]]:
     rel = str(path.relative_to(root))
-    module = rel.rsplit(".", 1)[0].replace("/", ".")
+    module = module_of(rel)
     symbols: list[Symbol] = []
     edges: list[RawEdge] = []
     for i, l in enumerate(path.read_text(errors="replace").splitlines(), 1):
@@ -147,7 +153,7 @@ def _enclosing(defs: list[tuple[Node, str]], node: Node) -> str | None:
 def parse_file(path: Path, root: Path, lang: str) -> tuple[list[Symbol], list[RawEdge]]:
     src = path.read_bytes()
     rel = str(path.relative_to(root))
-    module = rel.rsplit(".", 1)[0].replace("/", ".")
+    module = module_of(rel)
     root_node = Parser(language(lang)).parse(src).root_node
     if root_node.has_error:
         print(f"warning: {rel}: syntax errors, partial parse", file=sys.stderr)
@@ -281,6 +287,7 @@ SCHEMA = hashlib.sha1(
         )
         + ",".join(f.name for f in dataclasses.fields(RawEdge))
         + "calls:callee-pos"
+        + "src-root"
     ).encode()
 ).hexdigest()[:12]
 
