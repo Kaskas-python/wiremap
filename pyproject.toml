@@ -1,0 +1,17 @@
+[project]
+name = "wiremap"
+version = "0.1.0"
+description = "Framework-aware code context for AI coding agents: callers, deps, skeletons and context packs, never stale."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = ["tree-sitter==0.26.0", "tree-sitter-python==0.25.0", "tree-sitter-typescript==0.23.2"]
+[project.scripts]
+wiremap = "wiremap.cli:main"
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+[tool.hatch.build.targets.wheel]
+packages = ["src/wiremap"]
+[dependency-groups]
+dev = ["pytest>=8"]
