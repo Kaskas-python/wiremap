@@ -196,8 +196,9 @@ def parse_file(path: Path, root: Path, lang: str) -> tuple[list[Symbol], list[Ra
             src=f"{module}.{q}" if (q := _enclosing(defs, m["call.node"])) else module,
             kind="calls",
             target_text=m["call.callee"].text.decode(),
-            line=m["call.node"].start_point[0] + 1,
+            line=m["call.callee"].start_point[0] + 1,
             file=rel,
+            col=m["call.callee"].start_point[1],
         )
         for m in ms
         if "call.node" in m and m["call.node"].parent.type != "decorator"
@@ -279,6 +280,7 @@ SCHEMA = hashlib.sha1(
             for f in sorted(set(_QUERY_FILE.values()))
         )
         + ",".join(f.name for f in dataclasses.fields(RawEdge))
+        + "calls:callee-pos"
     ).encode()
 ).hexdigest()[:12]
 

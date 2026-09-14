@@ -1,0 +1,274 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>wiremap</title>
+<style>
+  :root { --bg:#f7f7f5; --fg:#1c1c1a; --line:#d8d8d2; --panel:#fff; --link:#1a5fb4; }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; }
+  body { background:var(--bg); color:var(--fg); display:flex; flex-direction:column;
+         font:13px/1.45 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  #bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:8px 10px;
+         border-bottom:1px solid var(--line); background:var(--panel); }
+  #q { padding:4px 8px; border:1px solid var(--line); border-radius:4px; font:inherit;
+       min-width:150px; }
+  #kinds { display:flex; flex-wrap:wrap; gap:8px; }
+  #kinds label { display:inline-flex; gap:4px; align-items:center; white-space:nowrap; }
+  .sw { width:10px; height:10px; border-radius:2px; display:inline-block; }
+  button { font:inherit; padding:4px 10px; border:1px solid var(--line);
+           background:var(--panel); border-radius:4px; cursor:pointer; }
+  #status { margin-left:auto; opacity:.7; white-space:nowrap; }
+  #main { flex:1; position:relative; min-height:0; }
+  canvas { display:block; width:100%; height:100%; }
+  aside { position:absolute; top:0; right:0; width:280px; max-width:80%; height:100%;
+          overflow:auto; background:var(--panel); border-left:1px solid var(--line);
+          padding:12px; }
+  aside[hidden] { display:none; }
+  aside h2 { font-size:13px; margin:0 0 6px; word-break:break-all; }
+  aside .meta { opacity:.7; word-break:break-all; }
+  aside h3 { font-size:11px; text-transform:uppercase; letter-spacing:.05em; opacity:.6;
+             margin:12px 0 4px; }
+  aside a { display:block; color:var(--link); cursor:pointer; word-break:break-all;
+            padding:1px 0; }
+  aside a:hover { text-decoration:underline; }
+  @media (max-width:480px) { aside { width:100%; } #status { margin-left:0; } }
+</style>
+<div id="bar">
+  <input id="q" type="search" placeholder="search symbols" autocomplete="off">
+  <span id="kinds"></span>
+  <button id="svg">Export SVG</button>
+  <span id="status"></span>
+</div>
+<div id="main">
+  <canvas id="c"></canvas>
+  <aside id="panel" hidden></aside>
+</div>
+<!-- Layout uses O(n^2) pairwise repulsion per tick; fine up to the NODE_CAP of 5000.
+     Upgrade: a Barnes-Hut quadtree if larger graphs ever need to render. -->
+<script>
+const DATA = /*DATA*/;
+const KINDC = { calls:"#8a8a84", depends:"#3068c8", graph_edge:"#8a4fc0", route:"#2e9e57",
+  task:"#d98324", relationship:"#1f9c93", table_ref:"#8a5a2b", mentions:"#b9b9b2",
+  graph_node:"#a06cd5", imports:"#c0c0b8" };
+const IN_C = "#1f9c93", OUT_C = "#d98324";
+const cv = document.getElementById("c"), ctx = cv.getContext("2d");
+const panel = document.getElementById("panel"), qbox = document.getElementById("q");
+const nodes = DATA.nodes.map(n => ({ ...n, x:0, y:0, vx:0, vy:0, deg:0 }));
+const byId = new Map(nodes.map(n => [n.id, n]));
+const edges = DATA.edges.filter(e => byId.has(e.src) && byId.has(e.dst));
+const adj = new Map(nodes.map(n => [n.id, []]));
+for (const e of edges) {
+  adj.get(e.src).push(e); adj.get(e.dst).push(e);
+  byId.get(e.src).deg++; byId.get(e.dst).deg++;
+}
+let W = 0, H = 0, scale = 1, ox = 0, oy = 0;
+let sel = null, hov = null, iso = null, query = "", raf = 0, drag = null, pan = null;
+const off = new Set();
+const col = e => (sel && e.dst === sel) ? IN_C : (sel && e.src === sel) ? OUT_C
+  : (KINDC[e.kind] || "#999");
+const hash = s => { let h = 0; for (const ch of s) h = (h * 31 + ch.charCodeAt(0)) | 0;
+  return Math.abs(h); };
+const fill = n => `hsl(${hash(n.community) % 360}, 60%, 55%)`;
+const rad = n => 4 + 2 * Math.sqrt(n.deg);
+const sx = n => n.x * scale + ox, sy = n => n.y * scale + oy;
+
+function neighbours(id) {
+  const s = new Set([id]);
+  for (const e of adj.get(id) || []) { s.add(e.src); s.add(e.dst); }
+  return s;
+}
+function alphaOf(n) {
+  if (iso && !iso.has(n.id)) return 0;
+  if (sel) return (n.id === sel || neighbours(sel).has(n.id)) ? 1 : 0.15;
+  if (query) return n.id.toLowerCase().includes(query) ? 1 : 0.15;
+  return 1;
+}
+function resize() {
+  const r = cv.getBoundingClientRect(), d = window.devicePixelRatio || 1;
+  W = r.width; H = r.height;
+  cv.width = Math.round(W * d); cv.height = Math.round(H * d);
+  ctx.setTransform(d, 0, 0, d, 0, 0);
+  draw();
+}
+function tick() {
+  for (let i = 0; i < nodes.length; i++) {
+    const a = nodes[i];
+    for (let j = i + 1; j < nodes.length; j++) {
+      const b = nodes[j];
+      let dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy;
+      if (d2 < 0.01) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d2 = 0.01; }
+      const d = Math.sqrt(d2), f = 4000 / d2, fx = dx / d * f, fy = dy / d * f;
+      a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
+    }
+  }
+  for (const e of edges) {
+    const a = byId.get(e.src), b = byId.get(e.dst);
+    const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 0.01;
+    const f = (d - 80) * 0.05, fx = dx / d * f, fy = dy / d * f;
+    a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
+  }
+  let moving = false;
+  for (const n of nodes) {
+    n.vx += (W / 2 - n.x) * 0.01; n.vy += (H / 2 - n.y) * 0.01;
+    n.vx *= 0.85; n.vy *= 0.85;
+    if (n !== drag) { n.x += n.vx; n.y += n.vy; }
+    if (Math.abs(n.vx) > 0.05 || Math.abs(n.vy) > 0.05) moving = true;
+  }
+  return moving;
+}
+function loop() { const m = tick(); draw(); raf = m ? requestAnimationFrame(loop) : 0; }
+function kick() { if (!raf) raf = requestAnimationFrame(loop); }
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  ctx.lineWidth = 1;
+  for (const e of edges) {
+    if (off.has(e.kind)) continue;
+    const a = byId.get(e.src), b = byId.get(e.dst);
+    const al = Math.min(alphaOf(a), alphaOf(b));
+    if (al <= 0) continue;
+    ctx.globalAlpha = al * 0.75;
+    ctx.strokeStyle = col(e);
+    ctx.setLineDash(e.confidence === "INFERRED" ? [4, 3] : []);
+    ctx.beginPath(); ctx.moveTo(sx(a), sy(a)); ctx.lineTo(sx(b), sy(b)); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  ctx.font = "11px ui-sans-serif, system-ui, sans-serif";
+  for (const n of nodes) {
+    const al = alphaOf(n);
+    if (al <= 0) continue;
+    const x = sx(n), y = sy(n), r = rad(n) * scale;
+    ctx.globalAlpha = al;
+    ctx.fillStyle = fill(n);
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    if (n.id === sel) {
+      ctx.strokeStyle = "#1c1c1a"; ctx.lineWidth = 2; ctx.stroke(); ctx.lineWidth = 1;
+    }
+    if (scale > 0.8 || n.id === sel || n === hov) {
+      ctx.fillStyle = "#1c1c1a";
+      ctx.fillText(n.id, x + r + 3, y + 3);
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+function at(px, py) {
+  let best = null, bd = Infinity;
+  for (const n of nodes) {
+    if (alphaOf(n) <= 0) continue;
+    const dx = px - sx(n), dy = py - sy(n), d = Math.hypot(dx, dy);
+    if (d <= rad(n) * scale + 4 && d < bd) { best = n; bd = d; }
+  }
+  return best;
+}
+function link(id) {
+  const a = document.createElement("a");
+  a.textContent = id;
+  a.addEventListener("click", () => select(id));
+  return a;
+}
+function select(id) {
+  sel = id; iso = null;
+  panel.textContent = "";
+  const n = byId.get(id);
+  if (!n) { panel.hidden = true; draw(); return; }
+  const h = document.createElement("h2"); h.textContent = n.id; panel.append(h);
+  const m = document.createElement("div"); m.className = "meta";
+  m.textContent = n.kind + (n.file ? ` · ${n.file}:${n.line}` : "");
+  panel.append(m);
+  const ins = adj.get(id).filter(e => e.dst === id && !off.has(e.kind));
+  const outs = adj.get(id).filter(e => e.src === id && !off.has(e.kind));
+  for (const [title, list, pick] of [["callers", ins, e => e.src],
+                                     ["deps", outs, e => e.dst]]) {
+    const t = document.createElement("h3"); t.textContent = `${title} (${list.length})`;
+    panel.append(t);
+    for (const e of list) panel.append(link(pick(e)));
+  }
+  panel.hidden = false;
+  draw();
+}
+function clear() { sel = null; iso = null; panel.hidden = true; draw(); }
+cv.addEventListener("mousedown", ev => {
+  const n = at(ev.offsetX, ev.offsetY);
+  if (n) { drag = n; } else { pan = { x: ev.offsetX - ox, y: ev.offsetY - oy }; }
+});
+cv.addEventListener("mousemove", ev => {
+  if (drag) {
+    drag.x = (ev.offsetX - ox) / scale; drag.y = (ev.offsetY - oy) / scale;
+    drag.vx = drag.vy = 0; kick();
+  } else if (pan) {
+    ox = ev.offsetX - pan.x; oy = ev.offsetY - pan.y; draw();
+  } else {
+    const n = at(ev.offsetX, ev.offsetY);
+    cv.style.cursor = n ? "pointer" : "grab";
+    if (n !== hov) { hov = n; draw(); }
+  }
+});
+window.addEventListener("mouseup", () => { drag = null; pan = null; });
+cv.addEventListener("click", ev => {
+  const n = at(ev.offsetX, ev.offsetY);
+  if (n) select(n.id); else clear();
+});
+cv.addEventListener("dblclick", ev => {
+  const n = at(ev.offsetX, ev.offsetY);
+  if (n) { sel = n.id; iso = neighbours(n.id); draw(); }
+});
+cv.addEventListener("wheel", ev => {
+  ev.preventDefault();
+  const f = Math.exp(-ev.deltaY * 0.001), s2 = Math.min(8, Math.max(0.1, scale * f));
+  ox = ev.offsetX - (ev.offsetX - ox) * (s2 / scale);
+  oy = ev.offsetY - (ev.offsetY - oy) * (s2 / scale);
+  scale = s2; draw();
+}, { passive: false });
+window.addEventListener("keydown", ev => { if (ev.key === "Escape") clear(); });
+qbox.addEventListener("input", () => { query = qbox.value.trim().toLowerCase(); draw(); });
+const kindBox = document.getElementById("kinds");
+for (const k of [...new Set(edges.map(e => e.kind))].sort()) {
+  const l = document.createElement("label");
+  const cb = document.createElement("input");
+  cb.type = "checkbox"; cb.checked = true;
+  cb.addEventListener("change", () => {
+    if (cb.checked) off.delete(k); else off.add(k);
+    draw();
+  });
+  const sw = document.createElement("span");
+  sw.className = "sw"; sw.style.background = KINDC[k] || "#999";
+  const tx = document.createElement("span"); tx.textContent = k;
+  l.append(cb, sw, tx); kindBox.append(l);
+}
+document.getElementById("svg").addEventListener("click", () => {
+  if (!nodes.length) return;
+  const pad = 30, xs = nodes.map(n => n.x), ys = nodes.map(n => n.y);
+  const mx = Math.min(...xs) - pad, my = Math.min(...ys) - pad;
+  const w = Math.round(Math.max(...xs) - mx + pad), h = Math.round(Math.max(...ys) - my + pad);
+  const esc = s => s.replace(/[&<>"]/g,
+    c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+  const p = [`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" `
+    + `viewBox="0 0 ${w} ${h}"><rect width="100%" height="100%" fill="#f7f7f5"/>`];
+  for (const e of edges) {
+    if (off.has(e.kind)) continue;
+    const a = byId.get(e.src), b = byId.get(e.dst);
+    const d = e.confidence === "INFERRED" ? ' stroke-dasharray="4,3"' : "";
+    p.push(`<line x1="${(a.x - mx).toFixed(1)}" y1="${(a.y - my).toFixed(1)}" `
+      + `x2="${(b.x - mx).toFixed(1)}" y2="${(b.y - my).toFixed(1)}" `
+      + `stroke="${KINDC[e.kind] || "#999"}"${d}/>`);
+  }
+  for (const n of nodes) {
+    const r = rad(n), x = n.x - mx, y = n.y - my;
+    p.push(`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r.toFixed(1)}" `
+      + `fill="${fill(n)}"/><text x="${(x + r + 3).toFixed(1)}" y="${(y + 3).toFixed(1)}" `
+      + `font-family="sans-serif" font-size="10">${esc(n.id)}</text>`);
+  }
+  p.push("</svg>");
+  const url = URL.createObjectURL(new Blob(p, { type: "image/svg+xml" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = "wiremap.svg"; a.click();
+  URL.revokeObjectURL(url);
+});
+document.getElementById("status").textContent =
+  `${nodes.length} nodes · ${edges.length} edges · `
+  + `${new Set(nodes.map(n => n.community)).size} communities`;
+resize();
+window.addEventListener("resize", resize);
+for (const n of nodes) { n.x = Math.random() * (W || 800); n.y = Math.random() * (H || 600); }
+for (let i = 0; i < 300; i++) tick();
+draw();
+kick();
+</script>

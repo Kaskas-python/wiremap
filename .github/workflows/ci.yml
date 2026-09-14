@@ -8,4 +8,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv python install ${{ matrix.python }} && uv sync && uv run pytest -q
+      - uses: actions/setup-node@v4
+        with: {node-version: 22}
+      - run: npm i -g pyright typescript-language-server typescript
+      - run: uv python install ${{ matrix.python }} && uv sync --all-extras && uv run pytest -q

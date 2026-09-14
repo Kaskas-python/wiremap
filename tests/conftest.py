@@ -12,6 +12,8 @@ FILES = {
         "class Order:\n"
         '    __tablename__ = "orders"\n'
         '    customer = relationship("Customer")\n'
+        "    def total(self):\n"
+        "        return 0\n"
     ),
     "app/api.py": (
         "from fastapi import APIRouter, Depends\n"
@@ -24,6 +26,9 @@ FILES = {
         "    return 1\n"
     ),
     "app/other.py": "def get():\n    return 2\n",
+    "app/svc.py": (
+        "from app.db import Order\ndef load(o: Order):\n    return o.total()\n"
+    ),
     "app/graph.py": (
         "from langgraph.graph import StateGraph\n"
         "def classify(s):\n"
