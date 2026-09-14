@@ -167,6 +167,15 @@ def main(argv=None) -> int:
         print(status(root))
         return EXIT_OK
 
+    if args.cmd == "summarize" and args.write:
+        try:
+            text, code = summarize_write(root, args.write, sys.stdin.read())
+        except RepoError as exc:
+            print(exc, file=sys.stderr)
+            return EXIT_ERROR
+        print(text)
+        return code
+
     if args.cmd == "cache":
         print(cache_prune(root, args.days))
         return EXIT_OK
@@ -195,10 +204,7 @@ def main(argv=None) -> int:
             return EXIT_ERROR
     elif args.cmd == "summarize":
         try:
-            if args.write:
-                text, code = summarize_write(root, args.write, sys.stdin.read())
-            else:
-                text, code = summarize(g, root, args.files)
+            text, code = summarize(g, root, args.files)
         except RepoError as exc:
             print(exc, file=sys.stderr)
             return EXIT_ERROR
