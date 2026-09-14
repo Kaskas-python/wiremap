@@ -28,7 +28,8 @@ Stack: Python ≥ 3.10 · uv · hatchling · tree-sitter (exact pins) · pytest.
    path. Everything else is expressed by names.
 4. **Stateless by contract.** Never write into the target repo, never start a server, never
    add MCP. The only persisted state is `~/.cache/wiremap/<repo-sha1>/*.json`, written
-   temp + rename.
+   temp + rename. `install-skill` additionally copies `skills/wiremap/SKILL.md` to
+   `~/.claude/skills/wiremap/`.
 5. **Every edge carries a confidence** (`EXTRACTED` or `INFERRED`); ambiguity is reported
    (exit 1 with candidates, or an `unresolved:` count), never silently picked.
 6. **Test budget is one file.** `tests/test_wiremap.py`, the five tests in the plan, against

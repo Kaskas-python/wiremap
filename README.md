@@ -46,7 +46,8 @@ $ wiremap install-skill      # copies SKILL.md to ~/.claude/skills/wiremap/
 
 ## Commands
 
-All commands accept `--repo PATH` (default: the current checkout) and `--stats`.
+All commands accept `--repo PATH` (default: the current checkout) and `--stats`, given before
+the subcommand: `wiremap --repo PATH --stats <command>`.
 
 | Command | What it prints |
 |---|---|
@@ -59,8 +60,8 @@ All commands accept `--repo PATH` (default: the current checkout) and `--stats`.
 | `install-skill` | Copies `SKILL.md` to `~/.claude/skills/wiremap/` |
 | `cache prune [--days 30]` | Drops cache entries older than N days |
 
-Exit codes: `0` ok · `1` symbol not found or ambiguous (candidates printed) · `2` repo or
-parse error (also when more than 10% of files fail to parse).
+Exit codes: `0` ok · `1` symbol not found or ambiguous (candidates printed) · `2` repo error, or
+more than 10% of files unreadable (syntax errors warn and parse partially).
 
 ## Confidence model
 
@@ -99,6 +100,10 @@ Add a framework: one `Rule`, one fixture file, one assertion.
 - Relative and aliased imports (`from .x import y`, `import a as b`) are not tracked as
   import edges, so their targets resolve by unique name only (INFERRED) or land in
   `unresolved:`.
+- `START`/`END` constants passed to `add_edge` are not treated as edges.
+- A `.delay()`/`.apply_async()` call also yields a name-only `calls` edge to any repo
+  function named `delay`/`apply_async`.
+- `grep` needs ripgrep (`rg`) on PATH; exits `2` otherwise.
 
 ## Roadmap
 
