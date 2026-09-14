@@ -220,8 +220,11 @@ def pack(
         while len(head) + sum(map(len, sections)) + 1 > 15 and sec:
             sec.pop()
             dropped += 1
-        if dropped and sec:
-            sec[-1] = f"… and {dropped + 1} more"
+        if dropped:
+            if sec:
+                sec[-1] = f"… and {dropped + 1} more"
+            else:
+                sec.append(f"… and {dropped} more")
     return "\n".join(head + [ln for s in sections for ln in s] + [STOP]), 0
 
 

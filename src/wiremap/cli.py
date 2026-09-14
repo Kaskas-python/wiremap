@@ -2,6 +2,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from wiremap import __version__
 from wiremap.commands import (
     cache_prune,
     callers,
@@ -18,12 +19,20 @@ from wiremap.resolve import build
 EXIT_OK, EXIT_NOT_FOUND, EXIT_ERROR = 0, 1, 2
 
 
+def _depth(v: str) -> int:
+    n = int(v)
+    if n < 1:
+        raise argparse.ArgumentTypeError("must be >= 1")
+    return n
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="wiremap")
     p.add_argument("--repo", default=".", help="path inside the git checkout")
     p.add_argument(
         "--stats", action="store_true", help="print parse/cache/rule counts to stderr"
     )
+    p.add_argument("--version", action="version", version=f"wiremap {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sk = sub.add_parser("skeleton")
@@ -31,14 +40,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     ca = sub.add_parser("callers")
     ca.add_argument("symbol", metavar="SYMBOL")
-    ca.add_argument("--depth", type=int, default=1)
+    ca.add_argument("--depth", type=_depth, default=1)
     ca.add_argument(
-        "--min-confidence", choices=("extracted", "inferred"), default="inferred"
+        "--min-confidence",
+        type=str.lower,
+        choices=("extracted", "inferred"),
+        default="inferred",
     )
 
     dp = sub.add_parser("deps")
     dp.add_argument("target", metavar="TARGET")
-    dp.add_argument("--depth", type=int, default=1)
+    dp.add_argument("--depth", type=_depth, default=1)
 
     gr = sub.add_parser("grep")
     gr.add_argument("pattern", metavar="PATTERN")

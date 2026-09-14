@@ -47,7 +47,7 @@ $ wiremap install-skill      # copies SKILL.md to ~/.claude/skills/wiremap/
 ## Commands
 
 All commands accept `--repo PATH` (default: the current checkout) and `--stats`, given before
-the subcommand: `wiremap --repo PATH --stats <command>`.
+the subcommand: `wiremap --repo PATH --stats <command>`; `wiremap --version` prints the version.
 
 | Command | What it prints |
 |---|---|

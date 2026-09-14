@@ -1,6 +1,7 @@
 import functools
 import hashlib
 import json
+import os
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -217,16 +218,21 @@ def load_or_parse(
                 True,
             )
     symbols, edges = parse_file(path, root, lang)
-    entry.parent.mkdir(parents=True, exist_ok=True)
-    tmp = entry.with_suffix(".tmp")
-    tmp.write_text(
-        json.dumps(
-            {
-                "schema": SCHEMA,
-                "symbols": [asdict(s) for s in symbols],
-                "edges": [asdict(e) for e in edges],
-            }
+    tmp = entry.with_name(f"{entry.stem}.{os.getpid()}.tmp")
+    try:
+        entry.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(
+            json.dumps(
+                {
+                    "schema": SCHEMA,
+                    "symbols": [asdict(s) for s in symbols],
+                    "edges": [asdict(e) for e in edges],
+                }
+            )
         )
-    )
-    tmp.replace(entry)
+        tmp.replace(entry)
+    except OSError:
+        # ponytail: cache is an accelerator; a failed write (race loser, read-only
+        # ponytail: HOME, full disk) never changes the answer
+        pass
     return symbols, edges, False
