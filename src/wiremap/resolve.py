@@ -4,7 +4,14 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from wiremap.discover import EXTS, RepoError, files
-from wiremap.parse import LANG_SPECS, RawEdge, Symbol, language, load_or_parse
+from wiremap.parse import (
+    LANG_SPECS,
+    TEXT_LANGS,
+    RawEdge,
+    Symbol,
+    language,
+    load_or_parse,
+)
 
 
 @dataclass(frozen=True)
@@ -36,7 +43,9 @@ def index(
     by_id = {s.id: s for s in symbols}
     by_name: dict[tuple[str, str], list[str]] = {}
     for s in symbols:
-        key = (_lang_of(s.file), s.name)
+        # ponytail: a table defined in both schema.sql and __tablename__ shares one
+        # id; last file wins in by_id; upgrade: key tables by file if both must survive
+        key = ("sql", s.name) if s.kind == "table" else (_lang_of(s.file), s.name)
         if s.id not in by_name.setdefault(key, []):
             by_name[key].append(s.id)
     return by_id, by_name
@@ -50,12 +59,22 @@ def _resolve(
     by_name: dict[tuple[str, str], list[str]],
     unresolved: dict[str, int],
 ) -> tuple[str, str] | None:
+    lang = _lang_of(raw.file)
+    if lang in TEXT_LANGS and raw.target_text in by_id:
+        return raw.target_text, "EXTRACTED"
     t = raw.target_text.split(".")[-1]
     if (cand := f"{module}.{t}") in by_id:
         return cand, "EXTRACTED"
     if t in imports and imports[t] in by_id:
         return imports[t], "EXTRACTED"
-    ids = by_name.get((_lang_of(raw.file), t), [])
+    if lang in TEXT_LANGS:
+        # ponytail: scans every name for each doc mention (names x mentions);
+        # upgrade: a bare-name index keyed on name alone if docs get large
+        ids = [i for (_, n), v in by_name.items() if n == t for i in v]
+        # ponytail: prose naming an ambiguous symbol is not a missing edge, so it
+        # never writes unresolved; upgrade: report doc ambiguity separately if wanted
+        return (ids[0], "INFERRED") if len(ids) == 1 else None
+    ids = by_name.get((lang, t), [])
     if len(ids) == 1:
         return ids[0], "INFERRED"
     if len(ids) > 1:
@@ -150,6 +169,10 @@ def build(root: Path) -> Graph:
                 )
                 dst, conf = r if r else (None, None)
             src = labels.get((raw.file, a), raw.src)
+        elif raw.target_text.startswith(("sql:", "sqlref:")):
+            dst = "sql:" + raw.target_text.split(":", 1)[1]
+            dst = dst if dst in by_id else None
+            conf = "EXTRACTED" if raw.target_text.startswith("sql:") else "INFERRED"
         else:
             r = _resolve(
                 raw,
@@ -160,7 +183,7 @@ def build(root: Path) -> Graph:
                 unresolved,
             )
             dst, conf = r if r else (None, None)
-            if r is None:
+            if r is None and raw.kind != "mentions":
                 t = raw.target_text.split(".")[-1]
                 if len(by_name.get((_lang_of(raw.file), t), [])) > 1:
                     ambiguous.setdefault(raw.src, []).append(t)

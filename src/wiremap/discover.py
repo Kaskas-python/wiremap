@@ -27,7 +27,15 @@ def head_stamp(root: Path) -> str:
     return f"{sha} {branch or '(detached)'}"
 
 
-EXTS = {".py": "python", ".ts": "typescript", ".tsx": "tsx", ".go": "go", ".rs": "rust"}
+EXTS = {
+    ".py": "python",
+    ".ts": "typescript",
+    ".tsx": "tsx",
+    ".go": "go",
+    ".rs": "rust",
+    ".sql": "sql",
+    ".md": "markdown",
+}
 MAX_BYTES = 1_000_000
 
 

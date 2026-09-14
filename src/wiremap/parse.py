@@ -1,8 +1,10 @@
+import dataclasses
 import functools
 import hashlib
 import importlib
 import json
 import os
+import re
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -55,6 +57,7 @@ class RawEdge:
     target_text: str
     line: int
     file: str
+    col: int = 0
 
 
 @functools.cache
@@ -73,6 +76,54 @@ _CLASS_TYPES = (
     "trait_item",
 )
 _QUOTES = "\"'"
+
+_SQL_DEF = re.compile(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`\"]?(\w+)", re.I)
+_SQL_REF = re.compile(r"\b(?:FROM|JOIN|INTO|UPDATE)\s+[`\"]?(\w+)", re.I)
+# ponytail: requires an opening quote earlier on the line, so a plain
+# `from x import y` never matches; prose false positives resolve to no edge;
+# upgrade: match the string-literal node from the Python grammar if false
+# positives matter
+_SQL_IN_STR = re.compile(
+    r"""["'][^"'\n]*?\b(?:FROM|JOIN|INTO|UPDATE)\s+(\w+)""", re.I
+)
+_MD_REF = re.compile(r"`([A-Za-z_][\w.]*)`")
+_TABLENAME = re.compile(r"__tablename__\s*=\s*[\"'](\w+)[\"']")
+TEXT_LANGS = {"sql", "markdown"}
+
+
+def _table(name: str, rel: str, i: int, sig: str) -> Symbol:
+    n = name.lower()
+    return Symbol(
+        id=f"sql:{n}",
+        file=rel,
+        kind="table",
+        name=n,
+        qualname=n,
+        line_start=i,
+        line_end=i,
+        signature=sig,
+    )
+
+
+def parse_text_file(
+    path: Path, root: Path, lang: str
+) -> tuple[list[Symbol], list[RawEdge]]:
+    rel = str(path.relative_to(root))
+    module = rel.rsplit(".", 1)[0].replace("/", ".")
+    symbols: list[Symbol] = []
+    edges: list[RawEdge] = []
+    for i, l in enumerate(path.read_text(errors="replace").splitlines(), 1):
+        if lang == "sql":
+            symbols += [_table(t, rel, i, l.strip()) for t in _SQL_DEF.findall(l)]
+            edges += [
+                RawEdge(module, "table_ref", f"sql:{t.lower()}", i, rel)
+                for t in _SQL_REF.findall(l)
+            ]
+        else:
+            edges += [
+                RawEdge(module, "mentions", t, i, rel) for t in _MD_REF.findall(l)
+            ]
+    return symbols, edges
 
 
 def matches(lang: str, node: Node, text: str | None = None) -> list[dict[str, Node]]:
@@ -116,7 +167,8 @@ def parse_file(path: Path, root: Path, lang: str) -> tuple[list[Symbol], list[Ra
             kinds.append("class")
             class_quals.add(qualname)
         # ponytail: Go receivers and Rust impl blocks do not nest — qualname is the
-        # bare name; nest via receiver/impl type if callers on methods matter.
+        # bare name, and Go `type_spec` kinds every type declaration as a class;
+        # nest via receiver/impl type if callers on methods matter.
         elif (
             n.type in ("method_definition", "method_declaration")
             or parent in class_quals
@@ -200,6 +252,22 @@ def parse_file(path: Path, root: Path, lang: str) -> tuple[list[Symbol], list[Ra
                     file=rel,
                 )
             )
+
+    if lang == "python":
+        enclosing_defs = list(symbols)
+
+        def owner(i: int) -> str:
+            inner = [s for s in enclosing_defs if s.line_start <= i <= s.line_end]
+            return max(inner, key=lambda s: s.line_start).id if inner else module
+
+        for i, line in enumerate(src.decode(errors="replace").splitlines(), 1):
+            for t in _TABLENAME.findall(line):
+                symbols.append(_table(t, rel, i, line.strip()))
+                edges.append(RawEdge(owner(i), "table_ref", f"sql:{t.lower()}", i, rel))
+            for t in _SQL_IN_STR.findall(line):
+                edges.append(
+                    RawEdge(owner(i), "table_ref", f"sqlref:{t.lower()}", i, rel)
+                )
     return symbols, edges
 
 
@@ -210,6 +278,7 @@ SCHEMA = hashlib.sha1(
             (Path(__file__).parent / "queries" / f).read_text()
             for f in sorted(set(_QUERY_FILE.values()))
         )
+        + ",".join(f.name for f in dataclasses.fields(RawEdge))
     ).encode()
 ).hexdigest()[:12]
 
@@ -241,7 +310,9 @@ def load_or_parse(
                 [RawEdge(**e) for e in d["edges"]],
                 True,
             )
-    symbols, edges = parse_file(path, root, lang)
+    symbols, edges = (parse_text_file if lang in TEXT_LANGS else parse_file)(
+        path, root, lang
+    )
     tmp = entry.with_name(f"{entry.stem}.{os.getpid()}.tmp")
     try:
         entry.parent.mkdir(parents=True, exist_ok=True)
