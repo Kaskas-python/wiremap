@@ -54,11 +54,25 @@ def callers(
     return "\n".join(body + [f"unresolved: {unresolved}"]), 0
 
 
+def _rel(root: Path, p: str) -> str | None:
+    q = (
+        Path(p)
+        if Path(p).is_absolute()
+        else (root / p if (root / p).is_file() else Path.cwd() / p)
+    )
+    try:
+        rel = q.resolve().relative_to(root.resolve())
+    except ValueError:
+        return None
+    return str(rel) if q.is_file() else None
+
+
 _DYNAMIC = ("getattr(", "importlib", "globals()[")
 
 
 def deps(g: Graph, root: Path, target: str, depth: int = 1) -> tuple[str, int]:
-    frontier = {s.id for s in g.symbols.values() if s.file == target}
+    rel = _rel(root, target)
+    frontier = {s.id for s in g.symbols.values() if s.file == rel} if rel else set()
     if not frontier:
         ids, code = _find(g, target)
         if code:
@@ -100,19 +114,6 @@ def entrypoints(g: Graph) -> str:
     roots = [e.src for e in g.edges if e.kind == "graph_edge" and e.src not in linked]
     body = sorted(rows) + [f"{r}  graph_root" for r in sorted(set(roots))]
     return "\n".join(_cap(body) or ["no entry points found"])
-
-
-def _rel(root: Path, p: str) -> str | None:
-    q = (
-        Path(p)
-        if Path(p).is_absolute()
-        else (root / p if (root / p).is_file() else Path.cwd() / p)
-    )
-    try:
-        rel = q.resolve().relative_to(root.resolve())
-    except ValueError:
-        return None
-    return str(rel) if q.is_file() else None
 
 
 def skeleton(g: Graph, root: Path, paths: list[str]) -> tuple[str, int]:
@@ -209,14 +210,18 @@ def pack(
         if "  " in r and not r.startswith("unresolved")
     ]
     sk = [
-        ln
-        for ln in skeleton(g, root, rels)[0].splitlines()
-        if ln != "no symbols in given files"
+        "  " * s.qualname.count(".") + s.signature
+        for f in rels
+        for s in _symbols_in(g, f)
     ]
     sections = [ep, fl, ca, sk]
     for sec in (sk, ca, ep):
+        dropped = 0
         while len(head) + sum(map(len, sections)) + 1 > 15 and sec:
             sec.pop()
+            dropped += 1
+        if dropped and sec:
+            sec[-1] = f"… and {dropped + 1} more"
     return "\n".join(head + [ln for s in sections for ln in s] + [STOP]), 0
 
 

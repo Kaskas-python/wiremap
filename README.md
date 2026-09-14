@@ -60,8 +60,9 @@ the subcommand: `wiremap --repo PATH --stats <command>`.
 | `install-skill` | Copies `SKILL.md` to `~/.claude/skills/wiremap/` |
 | `cache prune [--days 30]` | Drops cache entries older than N days |
 
-Exit codes: `0` ok · `1` symbol not found or ambiguous (candidates printed) · `2` repo error, or
-more than 10% of files unreadable (syntax errors warn and parse partially).
+Exit codes: `0` ok · `1` symbol or path not found, or ambiguous (candidates printed) ·
+`2` repo error, or more than 10% of files unreadable (syntax errors warn and parse
+partially).
 
 ## Confidence model
 
@@ -70,7 +71,8 @@ Every edge carries its confidence, and ambiguity is reported rather than guessed
 - **EXTRACTED** — a literal reference in the source. Treat it as fact.
 - **INFERRED** — matched by unique name across the repo. Confirm before relying on it.
 - **`unresolved: N`** — N candidates shared that name, so no edge was recorded. A
-  non-zero count means grep before concluding there are no callers.
+  non-zero count means grep before concluding there are no callers. `deps` prints
+  `unresolved: N` — the number of ambiguous callee names it had to drop.
 
 ## Frameworks
 
