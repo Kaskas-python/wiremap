@@ -1,27 +1,39 @@
 import functools
 import hashlib
+import importlib
 import json
 import os
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-import tree_sitter_python
-import tree_sitter_typescript
 from tree_sitter import Language, Node, Parser, Query, QueryCursor
 
 from wiremap.frameworks import RULES
 
-_LANGS = {
-    "python": Language(tree_sitter_python.language()),
-    "typescript": Language(tree_sitter_typescript.language_typescript()),
-    "tsx": Language(tree_sitter_typescript.language_tsx()),
+LANG_SPECS = {
+    "python": ("tree_sitter_python", "language"),
+    "typescript": ("tree_sitter_typescript", "language_typescript"),
+    "tsx": ("tree_sitter_typescript", "language_tsx"),
+    "go": ("tree_sitter_go", "language"),
+    "rust": ("tree_sitter_rust", "language"),
 }
 _QUERY_FILE = {
     "python": "python.scm",
     "typescript": "typescript.scm",
     "tsx": "typescript.scm",
+    "go": "go.scm",
+    "rust": "rust.scm",
 }
+
+
+@functools.cache
+def language(lang: str) -> Language | None:
+    mod, fn = LANG_SPECS[lang]
+    try:
+        return Language(getattr(importlib.import_module(mod), fn)())
+    except ImportError:
+        return None
 
 
 @dataclass(frozen=True)
@@ -49,10 +61,17 @@ class RawEdge:
 def _query(lang: str, text: str | None = None) -> Query:
     if text is None:
         text = (Path(__file__).parent / "queries" / _QUERY_FILE[lang]).read_text()
-    return Query(_LANGS[lang], text)
+    return Query(language(lang), text)
 
 
-_CLASS_TYPES = ("class_definition", "class_declaration")
+_CLASS_TYPES = (
+    "class_definition",
+    "class_declaration",
+    "type_spec",
+    "struct_item",
+    "enum_item",
+    "trait_item",
+)
 _QUOTES = "\"'"
 
 
@@ -78,7 +97,7 @@ def parse_file(path: Path, root: Path, lang: str) -> tuple[list[Symbol], list[Ra
     src = path.read_bytes()
     rel = str(path.relative_to(root))
     module = rel.rsplit(".", 1)[0].replace("/", ".")
-    root_node = Parser(_LANGS[lang]).parse(src).root_node
+    root_node = Parser(language(lang)).parse(src).root_node
     if root_node.has_error:
         print(f"warning: {rel}: syntax errors, partial parse", file=sys.stderr)
     ms = matches(lang, root_node)
@@ -96,7 +115,12 @@ def parse_file(path: Path, root: Path, lang: str) -> tuple[list[Symbol], list[Ra
         if n.type in _CLASS_TYPES:
             kinds.append("class")
             class_quals.add(qualname)
-        elif n.type == "method_definition" or parent in class_quals:
+        # ponytail: Go receivers and Rust impl blocks do not nest — qualname is the
+        # bare name; nest via receiver/impl type if callers on methods matter.
+        elif (
+            n.type in ("method_definition", "method_declaration")
+            or parent in class_quals
+        ):
             kinds.append("method")
         else:
             kinds.append("function")
@@ -184,7 +208,7 @@ SCHEMA = hashlib.sha1(
         "".join(r.query for r in RULES)
         + "".join(
             (Path(__file__).parent / "queries" / f).read_text()
-            for f in ("python.scm", "typescript.scm")
+            for f in sorted(set(_QUERY_FILE.values()))
         )
     ).encode()
 ).hexdigest()[:12]
