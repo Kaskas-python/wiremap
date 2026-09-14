@@ -68,8 +68,10 @@ RULES: list[Rule] = [
     Rule(
         "celery",
         "python",
-        "(decorated_definition (decorator (identifier) @d) definition: (_) @self "
-        '(#match? @d "^(shared_task|task)$"))',
+        "(decorated_definition (decorator [(identifier) @d "
+        "(attribute attribute: (identifier) @d) (call function: (identifier) @d) "
+        "(call function: (attribute attribute: (identifier) @d))]) "
+        'definition: (_) @self (#match? @d "^(shared_task|task)$"))',
         "task",
         "self",
     ),
