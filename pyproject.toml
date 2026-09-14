@@ -8,6 +8,14 @@ license = "MIT"
 dependencies = ["tree-sitter==0.26.0", "tree-sitter-python==0.25.0", "tree-sitter-typescript==0.23.2"]
 [project.scripts]
 wiremap = "wiremap.cli:main"
+
+[project.optional-dependencies]
+go = [
+    "tree-sitter-go==0.25.0",
+]
+rust = [
+    "tree-sitter-rust==0.24.2",
+]
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -15,4 +23,8 @@ build-backend = "hatchling.build"
 packages = ["src/wiremap"]
 force-include = {"skills/wiremap/SKILL.md" = "wiremap/skills/wiremap/SKILL.md"}
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = [
+    "pytest>=8",
+    "tree-sitter-go==0.25.0",
+    "tree-sitter-rust==0.24.2",
+]

@@ -50,6 +50,10 @@ FILES = {
         "export function helper(): number { return 1; }\n"
         "export function main(): number { return helper(); }\n"
     ),
+    "svc/main.go": (
+        "package main\nfunc helper() int { return 1 }\nfunc main() { helper() }\n"
+    ),
+    "lib/core.rs": ("fn helper() -> i32 { 1 }\nfn run() { helper(); }\n"),
 }
 
 

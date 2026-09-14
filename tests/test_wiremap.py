@@ -39,4 +39,11 @@ def test_pack_fits_15_lines(repo, capsys):
 def test_cache_hit_skips_parse(repo, capsys):
     run(capsys, "--repo", str(repo), "--stats", "entrypoints")
     _, err, _ = run(capsys, "--repo", str(repo), "--stats", "entrypoints")
-    assert "cache_hits=7" in err
+    assert "cache_hits=9" in err
+
+
+def test_language_dropin(repo, capsys):
+    out, _, _ = run(capsys, "--repo", str(repo), "callers", "svc.main.helper")
+    assert "svc.main.main  calls  EXTRACTED" in out
+    out, _, _ = run(capsys, "--repo", str(repo), "callers", "lib.core.helper")
+    assert "lib.core.run  calls  EXTRACTED" in out

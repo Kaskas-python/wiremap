@@ -4,7 +4,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from wiremap.discover import EXTS, RepoError, files
-from wiremap.parse import RawEdge, Symbol, load_or_parse
+from wiremap.parse import LANG_SPECS, RawEdge, Symbol, language, load_or_parse
 
 
 @dataclass(frozen=True)
@@ -82,7 +82,13 @@ def build(root: Path) -> Graph:
     raws: list[RawEdge] = []
     hits = failed = 0
     paths = files(root)
+    missing: set[str] = set()
+    skipped = 0
     for path, lang in paths:
+        if lang in LANG_SPECS and language(lang) is None:
+            missing.add(lang)
+            skipped += 1
+            continue
         try:
             s, e, hit = load_or_parse(path, root, lang)
         except Exception as exc:  # noqa: BLE001
@@ -92,7 +98,7 @@ def build(root: Path) -> Graph:
         syms += s
         raws += e
         hits += hit
-    n_files = len(paths)
+    n_files = len(paths) - skipped
     if failed > n_files * 0.1:
         raise RepoError(f"{failed}/{n_files} files failed to parse")
 
@@ -162,10 +168,23 @@ def build(root: Path) -> Graph:
             edges.append(Edge(src, dst, raw.kind, conf, raw.file, raw.line))
 
     rule_counts = Counter(f"rule_{r.kind}" for r in raws if r.kind in _FRAMEWORK_KINDS)
+    if missing:
+        names = ",".join(sorted(missing))
+        print(
+            f"no grammar for {', '.join(sorted(missing))}: "
+            f"uv tool install 'wiremap[{names}]'",
+            file=sys.stderr,
+        )
     return Graph(
         by_id,
         edges,
         unresolved,
-        {"files": n_files, "cache_hits": hits, "failed": failed, **rule_counts},
+        {
+            "files": n_files,
+            "skipped_no_grammar": skipped,
+            "cache_hits": hits,
+            "failed": failed,
+            **rule_counts,
+        },
         ambiguous,
     )
