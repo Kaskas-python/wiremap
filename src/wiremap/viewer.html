@@ -35,6 +35,7 @@
 <div id="bar">
   <input id="q" type="search" placeholder="search symbols" autocomplete="off">
   <span id="kinds"></span>
+  <button id="fit">Fit</button>
   <button id="svg">Export SVG</button>
   <span id="status"></span>
 </div>
@@ -52,9 +53,17 @@ const KINDC = { calls:"#8a8a84", depends:"#3068c8", graph_edge:"#8a4fc0", route:
   graph_node:"#a06cd5", imports:"#c0c0b8" };
 const IN_C = "#1f9c93", OUT_C = "#d98324";
 const MAXV = 30;
+// d3-force cooling: every force is scaled by alpha, which decays to ALPHA_MIN
+// over WARM ticks; the rAF loop stops there, so a settled graph never drifts.
+const ALPHA_MIN = 0.001;
+let alpha = 1;
 const cv = document.getElementById("c"), ctx = cv.getContext("2d");
 const panel = document.getElementById("panel"), qbox = document.getElementById("q");
 const nodes = DATA.nodes.map(n => ({ ...n, x:0, y:0, vx:0, vy:0, deg:0 }));
+// warm-up budget: 300 ticks for small graphs, fewer as n grows (tick is O(n^2));
+// alpha reaches ALPHA_MIN exactly at the end of that budget.
+const WARM = nodes.length <= 300 ? 300 : Math.max(30, Math.floor(90000 / nodes.length));
+const ALPHA_DECAY = 1 - Math.pow(ALPHA_MIN, 1 / WARM);
 const byId = new Map(nodes.map(n => [n.id, n]));
 const edges = DATA.edges.filter(e => byId.has(e.src) && byId.has(e.dst));
 const adj = new Map(nodes.map(n => [n.id, []]));
@@ -89,7 +98,7 @@ function resize() {
   W = r.width; H = r.height;
   cv.width = Math.round(W * d); cv.height = Math.round(H * d);
   ctx.setTransform(d, 0, 0, d, 0, 0);
-  draw();
+  if (settled()) fit(); else draw();
 }
 function tick() {
   for (let i = 0; i < nodes.length; i++) {
@@ -98,7 +107,7 @@ function tick() {
       const b = nodes[j];
       let dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy;
       if (d2 < 0.01) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d2 = 0.01; }
-      const d = Math.max(Math.sqrt(d2), 1), f = 4000 / (d * d);
+      const d = Math.max(Math.sqrt(d2), 1), f = 4000 / (d * d) * alpha;
       const fx = dx / d * f, fy = dy / d * f;
       a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
     }
@@ -107,22 +116,40 @@ function tick() {
     const a = byId.get(e.src), b = byId.get(e.dst);
     const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 0.01;
     const s = 1 / Math.max(1, Math.min(a.deg, b.deg));
-    const f = (d - 80) * 0.05 * s, fx = dx / d * f, fy = dy / d * f;
+    const f = (d - 80) * 0.05 * s * alpha, fx = dx / d * f, fy = dy / d * f;
     a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
   }
-  let moving = false;
   for (const n of nodes) {
-    n.vx += (W / 2 - n.x) * 0.01; n.vy += (H / 2 - n.y) * 0.01;
+    n.vx += (W / 2 - n.x) * 0.01 * alpha; n.vy += (H / 2 - n.y) * 0.01 * alpha;
     n.vx *= 0.85; n.vy *= 0.85;
     n.vx = Math.max(-MAXV, Math.min(MAXV, n.vx));
     n.vy = Math.max(-MAXV, Math.min(MAXV, n.vy));
     if (n !== drag) { n.x += n.vx; n.y += n.vy; }
-    if (Math.abs(n.vx) > 0.05 || Math.abs(n.vy) > 0.05) moving = true;
   }
-  return moving;
+  alpha -= alpha * ALPHA_DECAY;
 }
-function loop() { const m = tick(); draw(); raf = m ? requestAnimationFrame(loop) : 0; }
-function kick() { if (!raf) raf = requestAnimationFrame(loop); }
+function settled() { return alpha < ALPHA_MIN; }
+function setStatus() {
+  document.getElementById("status").textContent =
+    statusBase + (settled() ? " · settled" : "");
+}
+function loop() {
+  tick(); draw();
+  if (settled()) { raf = 0; setStatus(); } else { raf = requestAnimationFrame(loop); }
+}
+function kick() { if (!raf && !settled()) raf = requestAnimationFrame(loop); }
+function reheat() { alpha = Math.max(alpha, 0.3); setStatus(); kick(); }
+function fit() {
+  if (!nodes.length) return;
+  const xs = nodes.map(n => n.x), ys = nodes.map(n => n.y);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  const y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const bw = Math.max(x1 - x0, 1), bh = Math.max(y1 - y0, 1);
+  scale = Math.max(0.05, Math.min(8, Math.min(W / bw, H / bh) * 0.9));
+  ox = W / 2 - (x0 + x1) / 2 * scale;
+  oy = H / 2 - (y0 + y1) / 2 * scale;
+  draw();
+}
 function draw() {
   ctx.clearRect(0, 0, W, H);
   ctx.lineWidth = 1;
@@ -198,7 +225,7 @@ cv.addEventListener("mousedown", ev => {
 cv.addEventListener("mousemove", ev => {
   if (drag) {
     drag.x = (ev.offsetX - ox) / scale; drag.y = (ev.offsetY - oy) / scale;
-    drag.vx = drag.vy = 0; kick();
+    drag.vx = drag.vy = 0; reheat();
   } else if (pan) {
     ox = ev.offsetX - pan.x; oy = ev.offsetY - pan.y; draw();
   } else {
@@ -223,7 +250,11 @@ cv.addEventListener("wheel", ev => {
   oy = ev.offsetY - (ev.offsetY - oy) * (s2 / scale);
   scale = s2; draw();
 }, { passive: false });
-window.addEventListener("keydown", ev => { if (ev.key === "Escape") clear(); });
+document.getElementById("fit").addEventListener("click", fit);
+window.addEventListener("keydown", ev => {
+  if (ev.key === "Escape") clear();
+  else if (ev.key === "f" && document.activeElement !== qbox) fit();
+});
 qbox.addEventListener("input", () => { query = qbox.value.trim().toLowerCase(); draw(); });
 const kindBox = document.getElementById("kinds");
 for (const k of [...new Set(edges.map(e => e.kind))].sort()) {
@@ -269,14 +300,13 @@ document.getElementById("svg").addEventListener("click", () => {
   a.href = url; a.download = "wiremap.svg"; a.click();
   URL.revokeObjectURL(url);
 });
-document.getElementById("status").textContent =
-  `${nodes.length} nodes · ${edges.length} edges · `
+let statusBase = `${nodes.length} nodes · ${edges.length} edges · `
   + `${new Set(nodes.map(n => n.community)).size} communities`;
 resize();
 window.addEventListener("resize", resize);
 for (const n of nodes) { n.x = Math.random() * (W || 800); n.y = Math.random() * (H || 600); }
-const warm = nodes.length <= 300 ? 300 : Math.max(30, Math.floor(90000 / nodes.length));
-for (let i = 0; i < warm; i++) tick();
+let warmTicks = 0;
+while (!settled() && warmTicks < WARM) { tick(); warmTicks++; }
 if (nodes.some(n => !Number.isFinite(n.x) || !Number.isFinite(n.y)
     || Math.abs(n.x) > 1e5 || Math.abs(n.y) > 1e5)) {
   const R = 40 * Math.sqrt(nodes.length);
@@ -284,8 +314,9 @@ if (nodes.some(n => !Number.isFinite(n.x) || !Number.isFinite(n.y)
     const a = 2 * Math.PI * i / nodes.length;
     n.x = W / 2 + R * Math.cos(a); n.y = H / 2 + R * Math.sin(a); n.vx = n.vy = 0;
   });
-  document.getElementById("status").textContent += " · fallback layout";
+  statusBase += " · fallback layout";
 }
-draw();
+fit();
+setStatus();
 kick();
 </script>
