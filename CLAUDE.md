@@ -6,7 +6,7 @@ plus SQL schemas and Markdown docs, into an in-memory graph on every call (symbo
 calls, plus framework edges for FastAPI, LangGraph, SQLAlchemy and Celery) and answers
 `callers`, `deps`, `skeleton`, `grep`, `entrypoints`, `pack`, `communities`, `graph`, `export`,
 `report`, `ask`, `triage`, `hook`, `status` and `summarize`. Persisted state lives only under
-`~/.cache/wiremap/`: parse entries, summaries, last stats.
+`~/.cache/wiremap/`: parse entries, summaries, last stats, `node/`.
 
 Stack: Python ≥ 3.10 · uv · hatchling · tree-sitter (exact pins) · pytest. Public repo
 `Kaskas-python/wiremap`, MIT, PyPI name `wiremap`.
@@ -32,7 +32,8 @@ Stack: Python ≥ 3.10 · uv · hatchling · tree-sitter (exact pins) · pytest.
 4. **Stateless by contract.** Never write into the target repo, never leave a process running
    after exit (an `--lsp` language server is a child killed before return), never add MCP. The
    only persisted state is under `~/.cache/wiremap/<repo-sha1>/` (parse entries, `summaries/`,
-   `last_stats.json`), written per-process temp + rename, best-effort. `install-skill`
+   `last_stats.json`), written per-process temp + rename, best-effort, plus
+   `~/.cache/wiremap/node/` (the TypeScript server, installed once by npm). `install-skill`
    additionally copies `skills/wiremap/SKILL.md` to `~/.claude/skills/wiremap/`.
 5. **Every edge carries a confidence** (`EXTRACTED` or `INFERRED`); ambiguity is reported
    (exit 1 with candidates, or an `unresolved:` count), never silently picked.

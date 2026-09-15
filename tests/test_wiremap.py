@@ -1,12 +1,12 @@
 import io
 import json
-import shutil
 import subprocess
 import sys
 
 import pytest
 
 from wiremap.cli import main
+from wiremap.lsp import _bin
 
 
 def run(capsys, *argv):
@@ -83,7 +83,7 @@ def test_workspace_prefixes_ids(repo, capsys, tmp_path_factory):
 
 
 @pytest.mark.skipif(
-    shutil.which("pyright-langserver") is None, reason="pyright not installed"
+    _bin("pyright-langserver") is None, reason="pyright not installed"
 )
 def test_lsp_upgrades_confidence(repo, capsys):
     out, _, _ = run(capsys, "--repo", str(repo), "callers", "app.db.Order.total")

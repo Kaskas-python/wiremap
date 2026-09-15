@@ -13,6 +13,7 @@ from wiremap.parse import Symbol, cache_dir, module_of, write_atomic
 from wiremap.resolve import Edge, Graph
 
 CAP = 40
+GREP_TIMEOUT = 30
 
 
 def _top(rows: list[str], n: int) -> list[str]:
@@ -136,11 +137,11 @@ def skeleton(g: Graph, root: Path, paths: list[str]) -> tuple[str, int]:
     return "\n".join(_cap(rows) or ["no symbols in given files"]), 0
 
 
-def _enclosing_symbol(g: Graph, file: str, line: int) -> str | None:
+def _enclosing_symbol(syms: list[Symbol], line: int) -> str | None:
     spans = [
         (s.line_end - s.line_start, s.id)
-        for s in g.symbols.values()
-        if s.file == file and s.line_start <= line <= s.line_end
+        for s in syms
+        if s.line_start <= line <= s.line_end
     ]
     return min(spans)[1] if spans else None
 
@@ -148,29 +149,41 @@ def _enclosing_symbol(g: Graph, file: str, line: int) -> str | None:
 def grep(g: Graph, root: Path, pattern: str) -> tuple[str, int]:
     try:
         proc = subprocess.run(
-            ["rg", "-n", "--json", pattern],
-            cwd=root,
+            [
+                "git",
+                "-C",
+                str(root),
+                "grep",
+                "-n",
+                "-I",
+                "-E",
+                "-z",
+                "--untracked",
+                "-e",
+                pattern,
+                "--",
+            ],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=GREP_TIMEOUT,
             check=False,
         )
-    except FileNotFoundError:
-        return "rg (ripgrep) is required for grep", 2
-    if proc.returncode == 2:
-        return proc.stderr.strip(), 2
-    out = proc.stdout
-    hits = [
-        (
-            m["data"]["path"]["text"],
-            m["data"]["line_number"],
-            m["data"]["lines"]["text"].rstrip(),
-        )
-        for m in map(json.loads, out.splitlines())
-        if m["type"] == "match"
-    ]
+    except subprocess.TimeoutExpired:
+        return f"grep: timed out after {GREP_TIMEOUT} s", 2
+    if proc.returncode > 1:
+        return proc.stderr.strip() or "grep: failed", 2
+    hits = []
+    for row in proc.stdout.split("\n"):
+        parts = row.split("\0", 2)
+        if len(parts) == 3 and parts[1].isdigit():
+            hits.append((parts[0], int(parts[1]), parts[2].rstrip()))
+    by_file = defaultdict(list)
+    for s in g.symbols.values():
+        by_file[s.file].append(s)
     groups = defaultdict(list)
     for f, ln, text in hits:
-        groups[_enclosing_symbol(g, f, ln) or f].append(f"  {f}:{ln}: {text}")
+        groups[_enclosing_symbol(by_file[f], ln) or f].append(f"  {f}:{ln}: {text}")
     body = [
         row
         for k, v in sorted(groups.items())

@@ -1,4 +1,5 @@
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -89,5 +90,8 @@ def repo(tmp_path, monkeypatch):
         ],
     ):
         subprocess.run(["git", "-C", str(tmp_path), *a], check=True)
+    monkeypatch.setenv(
+        "PYRIGHT_PYTHON_CACHE_DIR", str(Path.home() / ".cache" / "pyright-python")
+    )
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     return tmp_path

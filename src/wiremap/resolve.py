@@ -1,5 +1,6 @@
 import json
 import sys
+import time
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -312,6 +313,9 @@ def build_many(roots: list[Path], lsp: bool = False) -> Graph:
     return Graph(symbols, edges, unresolved, stats, ambiguous, [])
 
 
+LSP_BUDGET = 60
+
+
 def refine_with_lsp(
     root: Path,
     edges: list[Edge],
@@ -321,8 +325,16 @@ def refine_with_lsp(
     servers: dict[str, Lsp] = {}
     unavailable: set[str] = set()
     n = 0
+    t0 = time.monotonic()
     try:
         for raw, i in pairs:
+            if time.monotonic() - t0 > LSP_BUDGET:
+                print(
+                    f"lsp: budget of {LSP_BUDGET} s spent after {n} upgrades; "
+                    "rest left INFERRED",
+                    file=sys.stderr,
+                )
+                break
             lang = _lang_of(raw.file)
             if lang not in SERVERS or lang in unavailable:
                 continue
@@ -332,9 +344,9 @@ def refine_with_lsp(
                 except (OSError, RuntimeError, ValueError, KeyError) as exc:
                     note = (
                         f"lsp: {SERVERS[lang][0]} not found "
-                        "(npm i -g pyright typescript-language-server typescript)"
+                        "(uv tool install 'wiremap[lsp]')"
                         if isinstance(exc, FileNotFoundError)
-                        else f"lsp: {SERVERS[lang][0]} unusable, skipped"
+                        else f"lsp: {SERVERS[lang][0]} unusable, skipped ({exc})"
                     )
                     print(note, file=sys.stderr)
                     unavailable.add(lang)

@@ -51,8 +51,9 @@ $ wiremap install-skill      # copies SKILL.md to ~/.claude/skills/wiremap/
 $ uv tool install 'wiremap[go,rust]'   # Go and Rust grammars
 ```
 
-`--lsp` additionally needs language servers on PATH:
-`npm i -g pyright typescript-language-server typescript`.
+`uv tool install 'wiremap[lsp]'` bundles pyright with Node for `--lsp`; the TypeScript
+server is installed once by npm into `~/.cache/wiremap/node` on first `--lsp` use
+(network needed once).
 
 ## Commands
 
@@ -68,7 +69,7 @@ typescript-language-server; the child processes are killed before exit.
 | `skeleton <path>...` | One line per definition, indented by nesting |
 | `callers <symbol> [--depth N] [--min-confidence extracted]` | Who calls, injects, routes to or queues this symbol |
 | `deps <path\|symbol> [--depth N]` | What it calls, plus dynamic-dispatch notices |
-| `grep <regex>` | ripgrep hits grouped by enclosing symbol |
+| `grep <regex>` | git grep hits grouped by enclosing symbol |
 | `pack --files <path>... [--task TEXT]` | A ≤15-line context pack for a brief |
 | `entrypoints` | Routes, tasks and graph roots |
 | `communities` | Clusters of connected symbols with their hub (label propagation) |
@@ -151,7 +152,7 @@ Add a framework: one `Rule`, one fixture file, one assertion.
 - A `.delay()`/`.apply_async()` call also yields a name-only `calls` edge to any repo
   function named `delay`/`apply_async`.
 - Files over 1 MB are skipped (stderr notice + `skipped_too_large` stat).
-- `grep` needs ripgrep (`rg`) on PATH; exits `2` otherwise.
+- `grep` exits `2` on an invalid regex or after 30 s.
 - Untracked files are invisible to `triage` — it reads the diff, and git does not diff
   what it does not track.
 - `export --obsidian` refuses a DIR inside the repo unless it is gitignored. A `dir/`

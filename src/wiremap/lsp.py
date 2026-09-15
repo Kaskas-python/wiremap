@@ -1,6 +1,12 @@
+import importlib.util
 import json
+import os
 import select
+import shutil
+import signal
 import subprocess
+import sys
+import time
 import urllib.parse
 from pathlib import Path
 
@@ -16,28 +22,106 @@ LANGUAGE_ID = {
     "typescript": "typescript",
     "tsx": "typescriptreact",
 }
+TS_PINS = ["typescript@5.9.3", "typescript-language-server@6.0.0"]
+
+
+def _node_dir() -> Path | None:
+    spec = importlib.util.find_spec("nodejs_wheel")
+    return Path(spec.origin).parent if spec and spec.origin else None
+
+
+def _path_with_node() -> str:
+    # ponytail: the TypeScript server's launcher is `#!/usr/bin/env node`; the bundled
+    # node must be on the child's PATH on a machine without a system Node
+    d = _node_dir()
+    return os.pathsep.join(
+        filter(None, ([str(d / "bin")] if d else []) + [os.environ.get("PATH", "")])
+    )
+
+
+def _bin(name: str) -> str | None:
+    # ponytail: the wiremap[lsp] extra puts pyright-langserver next to the interpreter,
+    # which `uv tool` never exposes on PATH; upgrade: none needed
+    venv_bin = str(Path(sys.executable).parent)
+    return shutil.which(
+        name, path=os.pathsep.join(filter(None, [venv_bin, os.environ.get("PATH", "")]))
+    )
+
+
+def _ts_server() -> str | None:
+    if exe := _bin("typescript-language-server"):
+        return exe
+    d = _node_dir()
+    if d is None:
+        return None
+    node_dir = Path.home() / ".cache" / "wiremap" / "node"
+    exe = node_dir / "node_modules" / ".bin" / "typescript-language-server"
+    if not exe.exists():
+        # ponytail: one-time npm install into wiremap's cache (network once); the wheel's
+        # bin/npm launcher is a misplaced hard link, so npm-cli.js runs under the bundled node
+        node_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            subprocess.run(
+                [
+                    str(d / "bin" / "node"),
+                    str(d / "lib/node_modules/npm/bin/npm-cli.js"),
+                    "install",
+                    "--silent",
+                    "--no-audit",
+                    "--no-fund",
+                    "--prefix",
+                    str(node_dir),
+                    *TS_PINS,
+                ],
+                check=True,
+                capture_output=True,
+                timeout=180,
+                env={**os.environ, "PATH": _path_with_node()},
+            )
+        except subprocess.SubprocessError as exc:
+            raise RuntimeError(
+                f"npm install failed (exit {getattr(exc, 'returncode', 'timeout')})"
+            ) from exc
+    return str(exe)
+
+
+def _command(lang: str) -> list[str]:
+    name, *flags = SERVERS[lang]
+    exe = _ts_server() if lang != "python" else _bin(name)
+    if not exe:
+        raise FileNotFoundError(name)
+    return [exe, *flags]
 
 
 class Lsp:
     def __init__(self, root: Path, lang: str):
         self.root, self.lang, self.n, self.opened = root, lang, 0, set()
+        self._closed = False
         self.p = subprocess.Popen(
-            SERVERS[lang],
+            _command(lang),
             cwd=root,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             bufsize=0,
+            env={**os.environ, "PATH": _path_with_node()},
+            start_new_session=True,
         )
         try:
             self.call(
                 "initialize",
-                {"processId": None, "rootUri": root.as_uri(), "capabilities": {}},
+                {
+                    "processId": None,
+                    "rootUri": root.as_uri(),
+                    "workspaceFolders": [
+                        {"uri": root.as_uri(), "name": root.name}
+                    ],
+                    "capabilities": {},
+                },
             )
             self.notify("initialized", {})
         except BaseException:
-            self.p.kill()
-            self.p.wait()
+            self.close()
             raise
 
     def _wait(self) -> None:
@@ -91,10 +175,14 @@ class Lsp:
                 while self._readline() not in (b"\r\n", b"\n", b""):
                     pass
                 msg = json.loads(self._readn(n))
+                if msg.get("id") == self.n and "error" in msg:
+                    raise RuntimeError(msg["error"].get("message", "lsp error"))
                 if msg.get("id") == self.n and "method" not in msg:
                     return msg.get("result")
 
-    def definition(self, rel: str, line: int, col: int) -> tuple[str, int] | None:
+    def definition(
+        self, rel: str, line: int, col: int, hop: bool = False
+    ) -> tuple[str, int] | None:
         uri = (self.root / rel).as_uri()
         if rel not in self.opened:
             self.opened.add(rel)
@@ -116,6 +204,21 @@ class Lsp:
                 "position": {"line": line - 1, "character": col},
             },
         )
+        loc = self._loc(r)
+        if loc is None:
+            return None
+        f, ln, ch = loc
+        if not hop and self.lang != "python" and f == rel and ln != line:
+            # ponytail: tsserver answers with the in-file import binding while its project is
+            # still loading; retry the hop through the binding for a few seconds, then give up
+            for _ in range(3):
+                time.sleep(1)
+                if (d := self.definition(rel, ln, ch, hop=True)) and d[0] != rel:
+                    return d
+            return f, ln
+        return f, ln
+
+    def _loc(self, r) -> tuple[str, int, int] | None:
         if not r:
             return None
         loc = r[0] if isinstance(r, list) else r
@@ -127,12 +230,21 @@ class Lsp:
             or loc["targetRange"]
         )
         try:
-            return str(path.relative_to(self.root)), rng["start"]["line"] + 1
+            return (
+                str(path.relative_to(self.root)),
+                rng["start"]["line"] + 1,
+                rng["start"]["character"],
+            )
         except ValueError:
-            # ponytail: a definition outside the repo (site-packages) is dropped;
-            # upgrade: return an external marker if third-party jumps matter
+            # ponytail: a definition outside the repo (site-packages) is dropped
             return None
 
     def close(self) -> None:
-        self.p.kill()
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            os.killpg(self.p.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
         self.p.wait()
