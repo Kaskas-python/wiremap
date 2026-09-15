@@ -150,6 +150,7 @@ Add a framework: one `Rule`, one fixture file, one assertion.
 - `START`/`END` constants passed to `add_edge` are not treated as edges.
 - A `.delay()`/`.apply_async()` call also yields a name-only `calls` edge to any repo
   function named `delay`/`apply_async`.
+- Files over 1 MB are skipped (stderr notice + `skipped_too_large` stat).
 - `grep` needs ripgrep (`rg`) on PATH; exits `2` otherwise.
 - Untracked files are invisible to `triage` — it reads the diff, and git does not diff
   what it does not track.

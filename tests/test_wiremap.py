@@ -69,8 +69,8 @@ def test_cross_artifact_edges(repo, capsys):
     assert "app.api.list_orders  table_ref  INFERRED" in out
 
 
-def test_workspace_prefixes_ids(repo, capsys):
-    b = repo / "b"
+def test_workspace_prefixes_ids(repo, capsys, tmp_path_factory):
+    b = tmp_path_factory.mktemp("ws") / "b"
     b.mkdir()
     (b / "other.py").write_text("def caller():\n    list_orders()\n")
     subprocess.run(["git", "-C", str(b), "init", "-q"], check=True)

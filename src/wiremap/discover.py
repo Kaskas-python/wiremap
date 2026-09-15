@@ -43,12 +43,25 @@ EXTS = {
 MAX_BYTES = 1_000_000
 
 
-def files(root: Path) -> list[tuple[Path, str]]:
+def _listed(root: Path) -> list[str]:
     listed = _git(root, "ls-files", "-z").split("\0") + _git(
         root, "ls-files", "-z", "--others", "--exclude-standard"
     ).split("\0")
+    return sorted(set(filter(None, listed)))
+
+
+def oversized(root: Path) -> list[str]:
     out = []
-    for rel in sorted(set(filter(None, listed))):
+    for rel in _listed(root):
+        p = root / rel
+        if EXTS.get(p.suffix) and p.is_file() and p.stat().st_size > MAX_BYTES:
+            out.append(rel)
+    return out
+
+
+def files(root: Path) -> list[tuple[Path, str]]:
+    out = []
+    for rel in _listed(root):
         p = root / rel
         lang = EXTS.get(p.suffix)
         if lang and p.is_file() and p.stat().st_size <= MAX_BYTES:

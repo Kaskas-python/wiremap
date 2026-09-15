@@ -4,7 +4,7 @@ from collections import Counter
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from wiremap.discover import EXTS, RepoError, files, head_stamp
+from wiremap.discover import EXTS, RepoError, files, head_stamp, oversized
 from wiremap.lsp import SERVERS, Lsp
 from wiremap.parse import (
     LANG_SPECS,
@@ -224,8 +224,15 @@ def build(root: Path, lsp: bool = False, dangling: bool = False) -> Graph:
             f"uv tool install 'wiremap[{names}]'",
             file=sys.stderr,
         )
+    big = oversized(root)
+    if big:
+        print(
+            f"skipped {len(big)} files over 1 MB: {', '.join(big[:3])}",
+            file=sys.stderr,
+        )
     stats = {
         "files": n_files,
+        "skipped_too_large": len(big),
         "skipped_no_grammar": skipped,
         "cache_hits": hits,
         "failed": failed,

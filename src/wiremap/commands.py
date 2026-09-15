@@ -202,6 +202,7 @@ def pack(
         if rel is None:
             return f"not found: {p}", 1
         rels.append(rel)
+    rels = list(dict.fromkeys(rels))
     head = [f"HEAD {head_stamp(root)}"] + ([f"task: {task}"] if task else [])
     ep = [
         line
@@ -230,6 +231,12 @@ def pack(
         else []
     )
     sections = [ep, fl, ca, rel, sk]
+    nouns = {
+        id(ep): "entry points",
+        id(ca): "callers",
+        id(rel): "related",
+        id(sk): "definitions",
+    }
     for sec in (rel, sk, ca, ep):
         dropped = 0
         while len(head) + sum(map(len, sections)) + 1 > 15 and sec:
@@ -239,7 +246,7 @@ def pack(
             if sec:
                 sec[-1] = f"… and {dropped + 1} more"
             else:
-                sec.append(f"… and {dropped} more")
+                sec.append(f"… and {dropped} more {nouns[id(sec)]}")
     return "\n".join(head + [ln for s in sections for ln in s] + [STOP]), 0
 
 
@@ -344,7 +351,13 @@ def _select(
             if not files or bare(s.file) in files
         }
     )
-    edges = [e for e in g.edges if e.src in keep or e.dst in keep]
+    hit = [e for e in g.edges if e.src in keep or e.dst in keep]
+    # ponytail: one row per (src, dst, kind); EXTRACTED wins over INFERRED;
+    # upgrade: keep every line number if a UI ever needs them
+    seen: dict[tuple[str, str, str], Edge] = {}
+    for e in sorted(hit, key=lambda e: e.confidence != "EXTRACTED"):
+        seen.setdefault((e.src, e.dst, e.kind), e)
+    edges = list(seen.values())
     nodes = sorted({e.src for e in edges} | {e.dst for e in edges} | keep)
     if len(nodes) > NODE_CAP:
         print(
@@ -365,10 +378,13 @@ def to_mermaid(edges: list[Edge]) -> str:
     def nid(i: str) -> str:
         return re.sub(r"\W", "_", i)
 
+    def lbl(i: str) -> str:
+        return i.replace('"', "#quot;")
+
     rows = [
-        f'  {nid(e.src)}["{e.src}"] -->'
+        f'  {nid(e.src)}["{lbl(e.src)}"] -->'
         f'|{e.kind}{"" if e.confidence == "EXTRACTED" else "?"}| '
-        f'{nid(e.dst)}["{e.dst}"]'
+        f'{nid(e.dst)}["{lbl(e.dst)}"]'
         for e in edges[:CAP]
     ]
     omitted = (
@@ -377,11 +393,15 @@ def to_mermaid(edges: list[Edge]) -> str:
     return "\n".join(["graph LR"] + rows + omitted)
 
 
+def _dq(s: str) -> str:
+    return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def to_dot(edges: list[Edge]) -> str:
     return (
         "digraph wiremap {\n  rankdir=LR;\n"
         + "".join(
-            f'  "{e.src}" -> "{e.dst}" [label="{e.kind}"'
+            f'  "{_dq(e.src)}" -> "{_dq(e.dst)}" [label="{_dq(e.kind)}"'
             f'{", style=dashed" if e.confidence == "INFERRED" else ""}];\n'
             for e in edges
         )
@@ -743,7 +763,7 @@ def triage(g: Graph, root: Path, base: str = "main") -> tuple[str, int]:
             [f"changed: {len(changed)} symbols"]
             + _cap(rows)
             + doc_line
-            + [f"entrypoint touched: {e}" for e in eps]
+            + _cap([f"entrypoint touched: {e}" for e in eps])
         ),
         0,
     )

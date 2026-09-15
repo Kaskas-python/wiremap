@@ -149,10 +149,18 @@ def main(argv=None) -> int:
         return EXIT_OK
 
     try:
-        roots = [toplevel(Path(r)) for r in args.repo or ["."]]
+        roots = list(
+            dict.fromkeys(toplevel(Path(r)).resolve() for r in args.repo or ["."])
+        )
     except RepoError as exc:
         print(exc, file=sys.stderr)
         return EXIT_ERROR
+    nested = {
+        r: o for r in roots for o in roots if r != o and r.is_relative_to(o)
+    }
+    for r, o in nested.items():
+        print(f"workspace: {r} is inside {o}, dropped", file=sys.stderr)
+    roots = [r for r in roots if r not in nested]
     root = roots[0]
 
     if len(roots) > 1 and args.cmd in _SINGLE_ROOT:
@@ -215,6 +223,9 @@ def main(argv=None) -> int:
         text, code = report(g, root), EXIT_OK
     elif args.cmd == "triage":
         text, code = triage(g, root, args.base)
+        if code == 2:
+            print(text, file=sys.stderr)
+            return code
     elif args.cmd == "ask":
         text, code = ask(g, args.text), EXIT_OK
     elif args.cmd == "graph":

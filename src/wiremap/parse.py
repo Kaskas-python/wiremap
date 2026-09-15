@@ -1,3 +1,4 @@
+import bisect
 import dataclasses
 import functools
 import hashlib
@@ -139,15 +140,21 @@ def matches(lang: str, node: Node, text: str | None = None) -> list[dict[str, No
     ]
 
 
-def _enclosing(defs: list[tuple[Node, str]], node: Node) -> str | None:
-    containing = [
-        (d.start_byte, q)
-        for d, q in defs
-        if d is not node
-        and d.start_byte <= node.start_byte
-        and node.end_byte <= d.end_byte
-    ]
-    return max(containing)[1] if containing else None
+def _enclosing(
+    defs: list[tuple[Node, str]], spans: tuple[list[int], list[int]], node: Node
+) -> str | None:
+    # ponytail: defs are appended in start order and nest properly, so the nearest
+    # preceding def that contains the node is the innermost; maxends[i] is the
+    # furthest end among defs[0..i], so once it falls short of the node nothing
+    # earlier can contain it and the walk stops; upgrade: none
+    starts, maxends = spans
+    i = bisect.bisect_right(starts, node.start_byte) - 1
+    while i >= 0 and maxends[i] >= node.end_byte:
+        d, q = defs[i]
+        if d is not node and d.end_byte >= node.end_byte:
+            return q
+        i -= 1
+    return None
 
 
 def parse_file(path: Path, root: Path, lang: str) -> tuple[list[Symbol], list[RawEdge]]:
@@ -160,13 +167,16 @@ def parse_file(path: Path, root: Path, lang: str) -> tuple[list[Symbol], list[Ra
     ms = matches(lang, root_node)
 
     defs: list[tuple[Node, str]] = []
+    starts: list[int] = []
+    maxends: list[int] = []
+    spans = (starts, maxends)
     kinds: list[str] = []
     class_quals: set[str] = set()
     for m in sorted(
         (m for m in ms if "def.node" in m), key=lambda m: m["def.node"].start_byte
     ):
         n = m["def.node"]
-        parent = _enclosing(defs, n)
+        parent = _enclosing(defs, spans, n)
         name = m["def.name"].text.decode()
         qualname = f"{parent}.{name}" if parent else name
         if n.type in _CLASS_TYPES:
@@ -183,6 +193,8 @@ def parse_file(path: Path, root: Path, lang: str) -> tuple[list[Symbol], list[Ra
         else:
             kinds.append("function")
         defs.append((n, qualname))
+        starts.append(n.start_byte)
+        maxends.append(max(maxends[-1], n.end_byte) if maxends else n.end_byte)
 
     symbols = [
         Symbol(
@@ -205,7 +217,11 @@ def parse_file(path: Path, root: Path, lang: str) -> tuple[list[Symbol], list[Ra
 
     edges = [
         RawEdge(
-            src=f"{module}.{q}" if (q := _enclosing(defs, m["call.node"])) else module,
+            src=(
+                f"{module}.{q}"
+                if (q := _enclosing(defs, spans, m["call.node"]))
+                else module
+            ),
             kind="calls",
             target_text=m["call.callee"].text.decode(),
             line=m["call.callee"].start_point[0] + 1,
@@ -243,7 +259,7 @@ def parse_file(path: Path, root: Path, lang: str) -> tuple[list[Symbol], list[Ra
             q = (
                 qualname_of(m["self"])
                 if r.target == "self"
-                else _enclosing(defs, anchor)
+                else _enclosing(defs, spans, anchor)
             )
             src_id = f"{module}.{q}" if q else module
             if r.target == "self":

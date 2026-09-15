@@ -51,6 +51,7 @@ const KINDC = { calls:"#8a8a84", depends:"#3068c8", graph_edge:"#8a4fc0", route:
   task:"#d98324", relationship:"#1f9c93", table_ref:"#8a5a2b", mentions:"#b9b9b2",
   graph_node:"#a06cd5", imports:"#c0c0b8" };
 const IN_C = "#1f9c93", OUT_C = "#d98324";
+const MAXV = 30;
 const cv = document.getElementById("c"), ctx = cv.getContext("2d");
 const panel = document.getElementById("panel"), qbox = document.getElementById("q");
 const nodes = DATA.nodes.map(n => ({ ...n, x:0, y:0, vx:0, vy:0, deg:0 }));
@@ -97,20 +98,24 @@ function tick() {
       const b = nodes[j];
       let dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy;
       if (d2 < 0.01) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d2 = 0.01; }
-      const d = Math.sqrt(d2), f = 4000 / d2, fx = dx / d * f, fy = dy / d * f;
+      const d = Math.max(Math.sqrt(d2), 1), f = 4000 / (d * d);
+      const fx = dx / d * f, fy = dy / d * f;
       a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
     }
   }
   for (const e of edges) {
     const a = byId.get(e.src), b = byId.get(e.dst);
     const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 0.01;
-    const f = (d - 80) * 0.05, fx = dx / d * f, fy = dy / d * f;
+    const s = 1 / Math.max(1, Math.min(a.deg, b.deg));
+    const f = (d - 80) * 0.05 * s, fx = dx / d * f, fy = dy / d * f;
     a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
   }
   let moving = false;
   for (const n of nodes) {
     n.vx += (W / 2 - n.x) * 0.01; n.vy += (H / 2 - n.y) * 0.01;
     n.vx *= 0.85; n.vy *= 0.85;
+    n.vx = Math.max(-MAXV, Math.min(MAXV, n.vx));
+    n.vy = Math.max(-MAXV, Math.min(MAXV, n.vy));
     if (n !== drag) { n.x += n.vx; n.y += n.vy; }
     if (Math.abs(n.vx) > 0.05 || Math.abs(n.vy) > 0.05) moving = true;
   }
@@ -238,7 +243,8 @@ document.getElementById("svg").addEventListener("click", () => {
   if (!nodes.length) return;
   const pad = 30, xs = nodes.map(n => n.x), ys = nodes.map(n => n.y);
   const mx = Math.min(...xs) - pad, my = Math.min(...ys) - pad;
-  const w = Math.round(Math.max(...xs) - mx + pad), h = Math.round(Math.max(...ys) - my + pad);
+  const w = Math.max(1, Math.min(Math.round(Math.max(...xs) - mx + pad), 20000));
+  const h = Math.max(1, Math.min(Math.round(Math.max(...ys) - my + pad), 20000));
   const esc = s => s.replace(/[&<>"]/g,
     c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
   const p = [`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" `
@@ -271,6 +277,15 @@ window.addEventListener("resize", resize);
 for (const n of nodes) { n.x = Math.random() * (W || 800); n.y = Math.random() * (H || 600); }
 const warm = nodes.length <= 300 ? 300 : Math.max(30, Math.floor(90000 / nodes.length));
 for (let i = 0; i < warm; i++) tick();
+if (nodes.some(n => !Number.isFinite(n.x) || !Number.isFinite(n.y)
+    || Math.abs(n.x) > 1e5 || Math.abs(n.y) > 1e5)) {
+  const R = 40 * Math.sqrt(nodes.length);
+  nodes.forEach((n, i) => {
+    const a = 2 * Math.PI * i / nodes.length;
+    n.x = W / 2 + R * Math.cos(a); n.y = H / 2 + R * Math.sin(a); n.vx = n.vy = 0;
+  });
+  document.getElementById("status").textContent += " · fallback layout";
+}
 draw();
 kick();
 </script>
