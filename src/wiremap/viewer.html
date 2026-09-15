@@ -42,7 +42,8 @@
   <canvas id="c"></canvas>
   <aside id="panel" hidden></aside>
 </div>
-<!-- Layout uses O(n^2) pairwise repulsion per tick; fine up to the NODE_CAP of 5000.
+<!-- Layout uses O(n^2) pairwise repulsion per tick; fine up to the NODE_CAP of 1500,
+     where the warm-up is scaled down to keep first paint within a few seconds.
      Upgrade: a Barnes-Hut quadtree if larger graphs ever need to render. -->
 <script>
 const DATA = /*DATA*/;
@@ -268,7 +269,8 @@ document.getElementById("status").textContent =
 resize();
 window.addEventListener("resize", resize);
 for (const n of nodes) { n.x = Math.random() * (W || 800); n.y = Math.random() * (H || 600); }
-for (let i = 0; i < 300; i++) tick();
+const warm = nodes.length <= 300 ? 300 : Math.max(30, Math.floor(90000 / nodes.length));
+for (let i = 0; i < warm; i++) tick();
 draw();
 kick();
 </script>

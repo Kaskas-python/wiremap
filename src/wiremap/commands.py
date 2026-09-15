@@ -1,7 +1,6 @@
 import hashlib
 import html
 import json
-import os
 import re
 import subprocess
 import sys
@@ -10,16 +9,18 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from wiremap.discover import RepoError, _git, head_stamp
-from wiremap.parse import Symbol, cache_dir, module_of
+from wiremap.parse import Symbol, cache_dir, module_of, write_atomic
 from wiremap.resolve import Edge, Graph
 
 CAP = 40
 
 
+def _top(rows: list[str], n: int) -> list[str]:
+    return rows if len(rows) <= n else rows[:n] + [f"… and {len(rows) - n} more"]
+
+
 def _cap(lines: list[str]) -> list[str]:
-    return (
-        lines if len(lines) <= CAP else lines[:CAP] + [f"… and {len(lines) - CAP} more"]
-    )
+    return _top(lines, CAP)
 
 
 def _find(g: Graph, symbol: str) -> tuple[list[str], int]:
@@ -130,7 +131,7 @@ def skeleton(g: Graph, root: Path, paths: list[str]) -> tuple[str, int]:
         rels.append(rel)
     rows = []
     for s in sorted(g.symbols.values(), key=lambda s: (s.file, s.line_start)):
-        if s.file in rels:
+        if s.file in rels and s.kind != "table":
             rows.append("  " * s.qualname.count(".") + s.signature)
     return "\n".join(_cap(rows) or ["no symbols in given files"]), 0
 
@@ -187,7 +188,8 @@ def _id_prefix(file: str) -> str:
 
 def _symbols_in(g: Graph, file: str) -> list[Symbol]:
     return sorted(
-        (s for s in g.symbols.values() if s.file == file), key=lambda s: s.line_start
+        (s for s in g.symbols.values() if s.file == file and s.kind != "table"),
+        key=lambda s: s.line_start,
     )
 
 
@@ -219,10 +221,12 @@ def pack(
         for f in rels
         for s in _symbols_in(g, f)
     ]
-    matched = ask(g, task) if task else ""
     rel = (
-        [f"related: {r}" for r in matched.splitlines()[:5]]
-        if matched and not matched.startswith("no symbol")
+        [
+            f"related: {s.id}  {s.file}:{s.line_start}"
+            for s, _m, _d in _ask_rows(g, task)[:5]
+        ]
+        if task
         else []
     )
     sections = [ep, fl, ca, rel, sk]
@@ -231,8 +235,11 @@ def pack(
         while len(head) + sum(map(len, sections)) + 1 > 15 and sec:
             sec.pop()
             dropped += 1
-        if dropped and sec:
-            sec[-1] = f"… and {dropped + 1} more"
+        if dropped:
+            if sec:
+                sec[-1] = f"… and {dropped + 1} more"
+            else:
+                sec.append(f"… and {dropped} more")
     return "\n".join(head + [ln for s in sections for ln in s] + [STOP]), 0
 
 
@@ -254,9 +261,10 @@ def install_skill() -> str:
 def cache_prune(root: Path, days: int = 30) -> str:
     cutoff = time.time() - days * 86400
     n = 0
+    # ponytail: agent-authored notes are unreproducible, so pruning never touches
+    # summaries/*.txt; upgrade: none wanted
     entries = list(cache_dir(root).glob("*.json"))
-    summaries = cache_dir(root) / "summaries"
-    entries += list(summaries.glob("*.txt")) + list(summaries.glob("*.tmp"))
+    entries += list((cache_dir(root) / "summaries").glob("*.tmp"))
     for p in entries:
         if p.stat().st_mtime < cutoff:
             p.unlink()
@@ -278,8 +286,10 @@ def _adjacency(g: Graph) -> dict[str, set[str]]:
     return nbrs
 
 
-def community_of(g: Graph) -> dict[str, str]:
-    nbrs = _adjacency(g)
+def community_of(
+    g: Graph, nbrs: dict[str, set[str]] | None = None
+) -> dict[str, str]:
+    nbrs = _adjacency(g) if nbrs is None else nbrs
     label = {n: n for n in nbrs}
     # ponytail: label propagation in sorted order (deterministic);
     # upgrade: Leiden via igraph if clusters look wrong
@@ -298,8 +308,9 @@ def community_of(g: Graph) -> dict[str, str]:
     return label
 
 
-def communities(g: Graph) -> str:
-    nbrs, label = _adjacency(g), community_of(g)
+def communities(g: Graph, nbrs: dict[str, set[str]] | None = None) -> str:
+    nbrs = _adjacency(g) if nbrs is None else nbrs
+    label = community_of(g, nbrs)
     groups: dict[str, list[str]] = defaultdict(list)
     for n, l in label.items():
         groups[l].append(n)
@@ -313,16 +324,25 @@ def communities(g: Graph) -> str:
     return "\n".join(_cap(rows) or ["no edges"])
 
 
-NODE_CAP = 5000
+NODE_CAP = 1500
 
 
 def _select(
     g: Graph, files: list[str] | None = None, symbol: str | None = None
 ) -> tuple[list[str], list[Edge]]:
+    # ponytail: a workspace prefixes file paths with "<root>:"; strip it so
+    # --files matches; upgrade: pass the root through if prefixes ever nest
+    def bare(f: str) -> str:
+        return f.split(":", 1)[-1] if ":" in f else f
+
     keep = (
         {symbol}
         if symbol
-        else {s.id for s in g.symbols.values() if not files or s.file in files}
+        else {
+            s.id
+            for s in g.symbols.values()
+            if not files or bare(s.file) in files
+        }
     )
     edges = [e for e in g.edges if e.src in keep or e.dst in keep]
     nodes = sorted({e.src for e in edges} | {e.dst for e in edges} | keep)
@@ -331,13 +351,17 @@ def _select(
             f"graph: {len(nodes)} nodes, capped to {NODE_CAP}; use --files",
             file=sys.stderr,
         )
-        nodes = nodes[:NODE_CAP]
+        deg: Counter = Counter()
+        for e in edges:
+            deg[e.src] += 1
+            deg[e.dst] += 1
+        nodes = sorted(sorted(nodes, key=lambda n: (-deg[n], n))[:NODE_CAP])
         ns = set(nodes)
         edges = [e for e in edges if e.src in ns and e.dst in ns]
     return nodes, edges
 
 
-def to_mermaid(nodes: list[str], edges: list[Edge]) -> str:
+def to_mermaid(edges: list[Edge]) -> str:
     def nid(i: str) -> str:
         return re.sub(r"\W", "_", i)
 
@@ -353,7 +377,7 @@ def to_mermaid(nodes: list[str], edges: list[Edge]) -> str:
     return "\n".join(["graph LR"] + rows + omitted)
 
 
-def to_dot(nodes: list[str], edges: list[Edge]) -> str:
+def to_dot(edges: list[Edge]) -> str:
     return (
         "digraph wiremap {\n  rankdir=LR;\n"
         + "".join(
@@ -432,12 +456,13 @@ def to_html(
 
 def graph(
     g: Graph,
-    root: Path,
+    roots: list[Path],
     files: list[str] | None,
     symbol: str | None,
     fmt: str,
     html_out: Path | None = None,
 ) -> tuple[str, int]:
+    root = roots[0]
     rels = None
     if files:
         rels = []
@@ -454,26 +479,30 @@ def graph(
             return f"not found: {symbol}", 1
         symbol = ids[0]
     nodes, edges = _select(g, rels, symbol)
-    comm = community_of(g)
     if html_out:
         try:
-            _refuse_inside_repo(root, html_out)
+            _refuse_inside_repo(roots, html_out)
         except RepoError as exc:
             return str(exc), 2
-        tmp = html_out.with_name(f"{html_out.stem}.{os.getpid()}.tmp")
         try:
-            tmp.write_text(to_html(g, nodes, edges, comm))
-            tmp.replace(html_out)
+            write_atomic(html_out, to_html(g, nodes, edges, community_of(g)))
         except OSError:
             return f"cannot write {html_out}", 2
         return f"wrote {html_out} ({len(nodes)} nodes, {len(edges)} edges)", 0
+    # ponytail: exactly one branch runs, so community_of is computed lazily by
+    # being inside the lambdas that need it; upgrade: none
     out = {
-        "mermaid": lambda: to_mermaid(nodes, edges),
-        "dot": lambda: to_dot(nodes, edges),
-        "graphml": lambda: to_graphml(nodes, edges, comm),
-        "cypher": lambda: to_cypher(nodes, edges, comm),
+        "mermaid": lambda: to_mermaid(edges),
+        "dot": lambda: to_dot(edges),
+        "graphml": lambda: to_graphml(nodes, edges, community_of(g)),
+        "cypher": lambda: to_cypher(nodes, edges, community_of(g)),
     }
     return out[fmt](), 0
+
+
+def _summary_entry(root: Path, f: str, src: bytes) -> Path:
+    key = hashlib.sha1(f.encode() + b"\0" + src).hexdigest()
+    return cache_dir(root) / "summaries" / f"{key}.txt"
 
 
 def _cached_summary(root: Path, f: str) -> str:
@@ -481,8 +510,7 @@ def _cached_summary(root: Path, f: str) -> str:
         src = (root / f).read_bytes()
     except OSError:
         return ""
-    key = hashlib.sha1(f.encode() + b"\0" + src).hexdigest()
-    p = cache_dir(root) / "summaries" / f"{key}.txt"
+    p = _summary_entry(root, f, src)
     return p.read_text() if p.exists() else ""
 
 
@@ -514,14 +542,13 @@ def summarize_write(root: Path, file: str, text: str) -> tuple[str, int]:
     text = "\n".join(text.strip().splitlines()[:10])
     if not text:
         return "empty summary; nothing written", 1
-    src = (root / f).read_bytes()
-    key = hashlib.sha1(f.encode() + b"\0" + src).hexdigest()
-    entry = cache_dir(root) / "summaries" / f"{key}.txt"
-    tmp = entry.with_name(f"{entry.stem}.{os.getpid()}.tmp")
     try:
-        entry.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(text)
-        tmp.replace(entry)
+        src = (root / f).read_bytes()
+    except OSError:
+        return f"cannot read {f}", 1
+    entry = _summary_entry(root, f, src)
+    try:
+        write_atomic(entry, text)
     except OSError:
         return f"cannot write {entry}", 2
     return (
@@ -531,24 +558,24 @@ def summarize_write(root: Path, file: str, text: str) -> tuple[str, int]:
     )
 
 
-def _refuse_inside_repo(root: Path, out: Path) -> None:
-    inside = out.resolve().is_relative_to(root.resolve())
-    if (
-        inside
-        and subprocess.run(
-            ["git", "-C", str(root), "check-ignore", "-q", str(out)]
-        ).returncode
-        != 0
-    ):
-        raise RepoError(
-            f"{out} is inside the repo and not gitignored"
-            " (a 'vault/' pattern only matches once the directory exists"
-            " — use 'vault' or mkdir it first)"
-        )
+def _refuse_inside_repo(roots: list[Path], out: Path) -> None:
+    out = out.resolve()
+    for r in roots:
+        if not out.is_relative_to(r.resolve()):
+            continue
+        try:
+            _git(r, "check-ignore", "-q", str(out))
+        except subprocess.CalledProcessError:
+            raise RepoError(
+                f"{out} is inside the repo and not gitignored"
+                " (a 'dir/' pattern only matches once the directory exists"
+                " — drop the trailing slash or mkdir it first)"
+            ) from None
 
 
-def export_vault(g: Graph, root: Path, out: Path) -> str:
-    _refuse_inside_repo(root, out)
+def export_vault(g: Graph, roots: list[Path], out: Path) -> str:
+    root = roots[0]
+    _refuse_inside_repo(roots, out)
     comm = community_of(g)
     by_file: dict[str, list[Symbol]] = defaultdict(list)
     for s in g.symbols.values():
@@ -580,35 +607,24 @@ def export_vault(g: Graph, root: Path, out: Path) -> str:
             )
             + "\n"
         )
-        tmp = page.with_name(f"{page.stem}.{os.getpid()}.tmp")
         try:
-            page.parent.mkdir(parents=True, exist_ok=True)
-            tmp.write_text(text)
-            tmp.replace(page)
+            write_atomic(page, text)
         except OSError as exc:
             raise RepoError(f"cannot write {page}") from exc
     return f"wrote {len(by_file)} pages under {out}"
 
 
-def _top(rows: list[str], n: int) -> list[str]:
-    return rows if len(rows) <= n else rows[:n] + [f"… and {len(rows) - n} more"]
-
-
 def report(g: Graph, root: Path) -> str:
     nbrs = _adjacency(g)
     deg = sorted(nbrs, key=lambda n: (-len(nbrs[n]), n))
-    dirs = Counter(str(Path(s.file).parent) for s in g.symbols.values())
-    hub_of = {
-        d: next(
-            (
-                n
-                for n in deg
-                if n in g.symbols and str(Path(g.symbols[n].file).parent) == d
-            ),
-            "-",
-        )
-        for d in dirs
-    }
+    dir_of = {s.id: str(Path(s.file).parent) for s in g.symbols.values()}
+    dirs = Counter(dir_of.values())
+    first: dict[str, str] = {}
+    for n in deg:
+        d = dir_of.get(n)
+        if d is not None and d not in first:
+            first[d] = n
+    hub_of = {d: first.get(d, "-") for d in dirs}
     return "\n".join(
         [
             f"# wiremap report — HEAD {head_stamp(root)}",
@@ -622,7 +638,7 @@ def report(g: Graph, root: Path) -> str:
             [f"- {d}: {c} symbols, hub {hub_of[d]}" for d, c in dirs.most_common()], 15
         )
         + ["## Communities"]
-        + _top(communities(g).splitlines(), 10)
+        + _top(communities(g, nbrs).splitlines(), 10)
         + ["## Entry points"]
         + _top(entrypoints(g).splitlines(), 15)
         + ["## Unresolved (ambiguous names)"]
@@ -638,17 +654,22 @@ def report(g: Graph, root: Path) -> str:
     )
 
 
-def ask(g: Graph, text: str) -> str:
+def _ask_rows(g: Graph, text: str) -> list[tuple[Symbol, int, int]]:
     words = {w.lower() for w in re.findall(r"[A-Za-z_]{4,}", text)}
     nbrs = _adjacency(g)
-    hits = [
-        (sum(w in s.qualname.lower() for w in words), len(nbrs[s.id]), s)
-        for s in g.symbols.values()
-    ]
+    hits = []
+    for s in g.symbols.values():
+        ql = s.qualname.lower()
+        matches = sum(w in ql for w in words)
+        if matches:
+            hits.append((s, matches, len(nbrs[s.id])))
+    return sorted(hits, key=lambda h: (-h[1], -h[2], h[0].id))
+
+
+def ask(g: Graph, text: str) -> str:
     rows = [
         f"{s.id}  {s.file}:{s.line_start}  matches={m} edges={d}"
-        for m, d, s in sorted(hits, key=lambda t: (-t[0], -t[1], t[2].id))
-        if m
+        for s, m, d in _ask_rows(g, text)
     ]
     return "\n".join(_cap(rows) or ["no symbol names match the task text"])
 
@@ -656,16 +677,33 @@ def ask(g: Graph, text: str) -> str:
 _HUNK = re.compile(r"@@ -\S+ \+(\d+)(?:,(\d+))?")
 
 
+_DIFF_OPTS = (
+    "-c",
+    "core.quotePath=false",
+    "diff",
+    "-U0",
+    "--src-prefix=a/",
+    "--dst-prefix=b/",
+)
+
+
 def triage(g: Graph, root: Path, base: str = "main") -> tuple[str, int]:
-    if base.startswith("-"):
-        return "invalid --base", 2
     try:
-        diff = _git(root, "diff", "-U0", f"{base}...HEAD", "--")
+        _git(root, "rev-parse", "--verify", "--quiet", base)
     except subprocess.CalledProcessError:
+        return f"unknown --base {base}", 2
+    try:
+        diff = _git(root, *_DIFF_OPTS, f"{base}...HEAD", "--")
+    except subprocess.CalledProcessError:
+        # ponytail: the ref exists but shares no merge base (orphan branch), so
+        # there is no range to diff; upgrade: none — the working tree still counts
         diff = ""
-    diff += "\n" + _git(root, "diff", "-U0")
+    diff += "\n" + _git(root, *_DIFF_OPTS, "HEAD", "--")
     # ponytail: untracked files are invisible to triage;
     # upgrade: add `git ls-files --others` symbols as changed
+    syms_by_file: dict[str, list[Symbol]] = defaultdict(list)
+    for s in g.symbols.values():
+        syms_by_file[s.file].append(s)
     changed: set[str] = set()
     f = None
     for l in diff.splitlines():
@@ -676,8 +714,8 @@ def triage(g: Graph, root: Path, base: str = "main") -> tuple[str, int]:
             b = a + max(int(m[2] or 1), 1) - 1
             changed |= {
                 s.id
-                for s in g.symbols.values()
-                if s.file == f and s.line_start <= b and a <= s.line_end
+                for s in syms_by_file.get(f, [])
+                if s.line_start <= b and a <= s.line_end
             }
     if not changed:
         return "no changes", 0
@@ -728,7 +766,10 @@ def hook_post_edit(g: Graph, root: Path, payload: str) -> str:
         for s in _symbols_in(g, rel)
         if len(s.name) >= HOOK_MIN_NAME
         for e in g.edges
-        if e.dst == s.id and e.confidence == "EXTRACTED" and e.file != rel
+        if e.dst == s.id
+        and e.confidence == "EXTRACTED"
+        and e.kind != "mentions"
+        and e.file != rel
     ]
     if not rows:
         return ""

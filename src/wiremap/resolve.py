@@ -1,5 +1,4 @@
 import json
-import os
 import sys
 from collections import Counter
 from dataclasses import dataclass, field, replace
@@ -16,6 +15,7 @@ from wiremap.parse import (
     language,
     load_or_parse,
     module_of,
+    write_atomic,
 )
 
 
@@ -73,7 +73,9 @@ def _resolve(
 ) -> tuple[str, str] | None:
     lang = _lang_of(raw.file)
     if lang in TEXT_LANGS and raw.target_text in by_id:
-        return raw.target_text, "EXTRACTED"
+        # ponytail: prose is not evidence, so a doc citing a full id is still a
+        # lead; upgrade: none — this is the confidence contract
+        return raw.target_text, "INFERRED"
     t = raw.target_text.split(".")[-1]
     if (cand := f"{module}.{t}") in by_id:
         return cand, "EXTRACTED"
@@ -102,6 +104,9 @@ _FRAMEWORK_KINDS = (
 )
 
 
+_OPTIONAL_LANGS = ("go", "rust")
+
+
 def build(root: Path, lsp: bool = False, dangling: bool = False) -> Graph:
     syms: list[Symbol] = []
     raws: list[RawEdge] = []
@@ -111,6 +116,10 @@ def build(root: Path, lsp: bool = False, dangling: bool = False) -> Graph:
     skipped = 0
     for path, lang in paths:
         if lang in LANG_SPECS and language(lang) is None:
+            if lang not in _OPTIONAL_LANGS:
+                raise RepoError(
+                    f"grammar for {lang} is not installed: reinstall wiremap"
+                )
             missing.add(lang)
             skipped += 1
             continue
@@ -226,11 +235,9 @@ def build(root: Path, lsp: bool = False, dangling: bool = False) -> Graph:
         stats["lsp_upgraded"] = refine_with_lsp(
             root, edges, pairs, {(s.file, s.line_start): s.id for s in syms}
         )
-    p = cache_dir(root) / "last_stats.json"
-    tmp = p.with_name(f"{p.stem}.{os.getpid()}.tmp")
     try:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(
+        write_atomic(
+            cache_dir(root) / "last_stats.json",
             json.dumps(
                 {
                     "files": n_files,
@@ -238,9 +245,8 @@ def build(root: Path, lsp: bool = False, dangling: bool = False) -> Graph:
                     "unresolved": sum(unresolved.values()),
                     "stamp": head_stamp(root),
                 }
-            )
+            ),
         )
-        tmp.replace(p)
     except OSError:
         # ponytail: the statusline cache is best-effort, same as the parse cache;
         # a failed write only means `status` prints nothing
@@ -266,10 +272,7 @@ def build_many(roots: list[Path], lsp: bool = False) -> Graph:
         for n, g in gs
         for e in g.edges
     ]
-    by_name: dict[tuple[str, str], list[str]] = {}
-    for s in symbols.values():
-        key = ("sql", s.name) if s.kind == "table" else (_lang_of(s.file), s.name)
-        by_name.setdefault(key, []).append(s.id)
+    _, by_name, _ = index(list(symbols.values()))
     unresolved: dict[str, int] = {}
     for _, g in gs:
         for k, v in g.unresolved.items():
@@ -319,7 +322,7 @@ def refine_with_lsp(
             if lang not in servers:
                 try:
                     servers[lang] = Lsp(root, lang)
-                except (OSError, RuntimeError) as exc:
+                except (OSError, RuntimeError, ValueError, KeyError) as exc:
                     note = (
                         f"lsp: {SERVERS[lang][0]} not found "
                         "(npm i -g pyright typescript-language-server typescript)"
@@ -331,9 +334,12 @@ def refine_with_lsp(
                     continue
             try:
                 d = servers[lang].definition(raw.file, raw.line, raw.col)
-            except (RuntimeError, OSError):
-                # ponytail: a stalled or dead server stays unusable for the rest of
-                # the run; upgrade: restart it once if transient stalls show up
+            except (OSError, RuntimeError, ValueError, KeyError):
+                # ponytail: a stalled, dead or protocol-broken server stays unusable
+                # for the run; upgrade: restart it once if transient stalls show up
+                print(
+                    f"lsp: {SERVERS[lang][0]} unusable, skipped", file=sys.stderr
+                )
                 servers.pop(lang).close()
                 unavailable.add(lang)
                 continue

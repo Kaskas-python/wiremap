@@ -33,12 +33,9 @@ _SINGLE_ROOT = (
     "deps",
     "grep",
     "pack",
-    "cache",
     "summarize",
     "export",
     "triage",
-    "status",
-    "hook",
 )
 
 
@@ -202,7 +199,7 @@ def main(argv=None) -> int:
         text, code = pack(g, root, args.files, args.task)
     elif args.cmd == "export":
         try:
-            text, code = export_vault(g, root, Path(args.obsidian)), EXIT_OK
+            text, code = export_vault(g, roots, Path(args.obsidian)), EXIT_OK
         except RepoError as exc:
             print(exc, file=sys.stderr)
             return EXIT_ERROR
@@ -223,7 +220,7 @@ def main(argv=None) -> int:
     elif args.cmd == "graph":
         text, code = graph(
             g,
-            root,
+            roots,
             args.files,
             args.symbol,
             args.format,

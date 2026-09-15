@@ -197,6 +197,12 @@ def parse_file(path: Path, root: Path, lang: str) -> tuple[list[Symbol], list[Ra
         )
         for (n, q), kind in zip(defs, kinds)
     ]
+    def utf16_col(n: Node) -> int:
+        # ponytail: LSP positions are UTF-16 code units, tree-sitter gives bytes;
+        # upgrade: none — this is the protocol
+        pre = src[n.start_byte - n.start_point[1] : n.start_byte]
+        return len(pre.decode("utf-8", "replace").encode("utf-16-le")) // 2
+
     edges = [
         RawEdge(
             src=f"{module}.{q}" if (q := _enclosing(defs, m["call.node"])) else module,
@@ -204,7 +210,7 @@ def parse_file(path: Path, root: Path, lang: str) -> tuple[list[Symbol], list[Ra
             target_text=m["call.callee"].text.decode(),
             line=m["call.callee"].start_point[0] + 1,
             file=rel,
-            col=m["call.callee"].start_point[1],
+            col=utf16_col(m["call.callee"]),
         )
         for m in ms
         if "call.node" in m and m["call.node"].parent.type != "decorator"
@@ -292,6 +298,13 @@ SCHEMA = hashlib.sha1(
 ).hexdigest()[:12]
 
 
+def write_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.stem}.{os.getpid()}.tmp")
+    tmp.write_text(text)
+    tmp.replace(path)
+
+
 def cache_dir(root: Path) -> Path:
     return (
         Path.home()
@@ -322,19 +335,17 @@ def load_or_parse(
     symbols, edges = (parse_text_file if lang in TEXT_LANGS else parse_file)(
         path, root, lang
     )
-    tmp = entry.with_name(f"{entry.stem}.{os.getpid()}.tmp")
     try:
-        entry.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(
+        write_atomic(
+            entry,
             json.dumps(
                 {
                     "schema": SCHEMA,
                     "symbols": [asdict(s) for s in symbols],
                     "edges": [asdict(e) for e in edges],
                 }
-            )
+            ),
         )
-        tmp.replace(entry)
     except OSError:
         # ponytail: cache is an accelerator; a failed write (race loser, read-only
         # ponytail: HOME, full disk) never changes the answer

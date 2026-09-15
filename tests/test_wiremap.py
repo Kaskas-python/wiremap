@@ -136,8 +136,10 @@ def test_triage_lists_changed_callers(repo, capsys):
             "    yield None\n", "    yield None\n    return None\n"
         )
     )
-    out, _, _ = run(capsys, "--repo", str(repo), "triage")
+    out, _, _ = run(capsys, "--repo", str(repo), "triage", "--base", "HEAD")
     assert "app/api.py" in out
+    _, _, code = run(capsys, "--repo", str(repo), "triage", "--base", "nosuch")
+    assert code == 2
 
 
 def test_hook_post_edit_capped(repo, capsys, monkeypatch):

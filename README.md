@@ -82,7 +82,7 @@ typescript-language-server; the child processes are killed before exit.
 | `status` | One statusline segment from the last build's stats; never parses |
 | `summarize --files PATH... \| --write PATH` | Agent-written ≤ 10-line notes per file, cached by content hash; `--write` reads the note from stdin |
 | `install-skill` | Copies `SKILL.md` to `~/.claude/skills/wiremap/` |
-| `cache prune [--days 30]` | Drops cache entries older than N days |
+| `cache prune [--days 30]` | Drops parse-cache entries older than N days (notes are kept) |
 
 Exit codes: `0` ok · `1` symbol or path not found, or ambiguous (candidates printed) ·
 `2` repo error, or more than 10% of files unreadable (syntax errors warn and parse
@@ -116,7 +116,7 @@ Every edge carries its confidence, and ambiguity is reported rather than guessed
 
 Cross-artifact edges follow the same rule. `table_ref` is EXTRACTED from a `CREATE TABLE`
 or a `__tablename__`, and INFERRED when it comes from a SQL string embedded in code.
-`mentions` (a doc naming a symbol) is INFERRED unless the doc cites the full id.
+`mentions` is always INFERRED (prose is not evidence), even when a doc cites the full id.
 
 ## Frameworks
 
