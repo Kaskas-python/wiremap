@@ -25,7 +25,7 @@ from wiremap.commands import (
     triage,
 )
 from wiremap.discover import RepoError, toplevel
-from wiremap.resolve import build_many
+from wiremap.resolve import build, build_many
 
 EXIT_OK, EXIT_NOT_FOUND, EXIT_ERROR = 0, 1, 2
 _SINGLE_ROOT = (
@@ -34,11 +34,11 @@ _SINGLE_ROOT = (
     "grep",
     "pack",
     "cache",
-    "graph",
     "summarize",
     "export",
     "triage",
     "status",
+    "hook",
 )
 
 
@@ -143,8 +143,8 @@ def main(argv=None) -> int:
         # exit that would surface in the editor; upgrade: none wanted
         try:
             payload = sys.stdin.read()
-            roots = [toplevel(Path(r)) for r in args.repo or ["."]]
-            text = hook_post_edit(build_many(roots, args.lsp), roots[0], payload)
+            root = toplevel(Path((args.repo or ["."])[0]))
+            text = hook_post_edit(build(root, args.lsp), root, payload)
             if text:
                 print(text)
         except Exception:  # noqa: BLE001
@@ -181,7 +181,11 @@ def main(argv=None) -> int:
         return EXIT_OK
 
     try:
-        g = build_many(roots, args.lsp)
+        g = (
+            build(root, args.lsp)
+            if args.cmd in _SINGLE_ROOT
+            else build_many(roots, args.lsp)
+        )
     except RepoError as exc:
         print(exc, file=sys.stderr)
         return EXIT_ERROR
@@ -213,7 +217,7 @@ def main(argv=None) -> int:
     elif args.cmd == "report":
         text, code = report(g, root), EXIT_OK
     elif args.cmd == "triage":
-        text, code = triage(g, root, args.base), EXIT_OK
+        text, code = triage(g, root, args.base)
     elif args.cmd == "ask":
         text, code = ask(g, args.text), EXIT_OK
     elif args.cmd == "graph":

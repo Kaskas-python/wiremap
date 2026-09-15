@@ -456,6 +456,10 @@ def graph(
     nodes, edges = _select(g, rels, symbol)
     comm = community_of(g)
     if html_out:
+        try:
+            _refuse_inside_repo(root, html_out)
+        except RepoError as exc:
+            return str(exc), 2
         tmp = html_out.with_name(f"{html_out.stem}.{os.getpid()}.tmp")
         try:
             tmp.write_text(to_html(g, nodes, edges, comm))
@@ -477,7 +481,8 @@ def _cached_summary(root: Path, f: str) -> str:
         src = (root / f).read_bytes()
     except OSError:
         return ""
-    p = cache_dir(root) / "summaries" / f"{hashlib.sha1(src).hexdigest()}.txt"
+    key = hashlib.sha1(f.encode() + b"\0" + src).hexdigest()
+    p = cache_dir(root) / "summaries" / f"{key}.txt"
     return p.read_text() if p.exists() else ""
 
 
@@ -510,7 +515,8 @@ def summarize_write(root: Path, file: str, text: str) -> tuple[str, int]:
     if not text:
         return "empty summary; nothing written", 1
     src = (root / f).read_bytes()
-    entry = cache_dir(root) / "summaries" / f"{hashlib.sha1(src).hexdigest()}.txt"
+    key = hashlib.sha1(f.encode() + b"\0" + src).hexdigest()
+    entry = cache_dir(root) / "summaries" / f"{key}.txt"
     tmp = entry.with_name(f"{entry.stem}.{os.getpid()}.tmp")
     try:
         entry.parent.mkdir(parents=True, exist_ok=True)
@@ -525,7 +531,7 @@ def summarize_write(root: Path, file: str, text: str) -> tuple[str, int]:
     )
 
 
-def export_vault(g: Graph, root: Path, out: Path) -> str:
+def _refuse_inside_repo(root: Path, out: Path) -> None:
     inside = out.resolve().is_relative_to(root.resolve())
     if (
         inside
@@ -539,6 +545,10 @@ def export_vault(g: Graph, root: Path, out: Path) -> str:
             " (a 'vault/' pattern only matches once the directory exists"
             " — use 'vault' or mkdir it first)"
         )
+
+
+def export_vault(g: Graph, root: Path, out: Path) -> str:
+    _refuse_inside_repo(root, out)
     comm = community_of(g)
     by_file: dict[str, list[Symbol]] = defaultdict(list)
     for s in g.symbols.values():
@@ -549,11 +559,10 @@ def export_vault(g: Graph, root: Path, out: Path) -> str:
 
     for f, syms in by_file.items():
         page = out / (f + ".md")
-        page.parent.mkdir(parents=True, exist_ok=True)
         ids = {s.id for s in syms}
         calls = sorted({e.dst for e in g.edges if e.src in ids and e.dst not in ids})
         called = sorted({e.src for e in g.edges if e.dst in ids and e.src not in ids})
-        page.write_text(
+        text = (
             "\n".join(
                 [
                     f"# {f}",
@@ -571,6 +580,13 @@ def export_vault(g: Graph, root: Path, out: Path) -> str:
             )
             + "\n"
         )
+        tmp = page.with_name(f"{page.stem}.{os.getpid()}.tmp")
+        try:
+            page.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text(text)
+            tmp.replace(page)
+        except OSError as exc:
+            raise RepoError(f"cannot write {page}") from exc
     return f"wrote {len(by_file)} pages under {out}"
 
 
@@ -640,9 +656,11 @@ def ask(g: Graph, text: str) -> str:
 _HUNK = re.compile(r"@@ -\S+ \+(\d+)(?:,(\d+))?")
 
 
-def triage(g: Graph, root: Path, base: str = "main") -> str:
+def triage(g: Graph, root: Path, base: str = "main") -> tuple[str, int]:
+    if base.startswith("-"):
+        return "invalid --base", 2
     try:
-        diff = _git(root, "diff", "-U0", f"{base}...HEAD")
+        diff = _git(root, "diff", "-U0", f"{base}...HEAD", "--")
     except subprocess.CalledProcessError:
         diff = ""
     diff += "\n" + _git(root, "diff", "-U0")
@@ -662,7 +680,7 @@ def triage(g: Graph, root: Path, base: str = "main") -> str:
                 if s.file == f and s.line_start <= b and a <= s.line_end
             }
     if not changed:
-        return "no changes"
+        return "no changes", 0
     by_file: dict[str, set[str]] = defaultdict(set)
     docs: dict[str, set[str]] = defaultdict(set)
     for e in g.edges:
@@ -682,11 +700,14 @@ def triage(g: Graph, root: Path, base: str = "main") -> str:
     eps = sorted(
         {e.dst for e in g.edges if e.kind in ("route", "task") and e.dst in changed}
     )
-    return "\n".join(
-        [f"changed: {len(changed)} symbols"]
-        + _cap(rows)
-        + doc_line
-        + [f"entrypoint touched: {e}" for e in eps]
+    return (
+        "\n".join(
+            [f"changed: {len(changed)} symbols"]
+            + _cap(rows)
+            + doc_line
+            + [f"entrypoint touched: {e}" for e in eps]
+        ),
+        0,
     )
 
 

@@ -319,12 +319,14 @@ def refine_with_lsp(
             if lang not in servers:
                 try:
                     servers[lang] = Lsp(root, lang)
-                except FileNotFoundError:
-                    print(
+                except (OSError, RuntimeError) as exc:
+                    note = (
                         f"lsp: {SERVERS[lang][0]} not found "
-                        "(npm i -g pyright typescript-language-server typescript)",
-                        file=sys.stderr,
+                        "(npm i -g pyright typescript-language-server typescript)"
+                        if isinstance(exc, FileNotFoundError)
+                        else f"lsp: {SERVERS[lang][0]} unusable, skipped"
                     )
+                    print(note, file=sys.stderr)
                     unavailable.add(lang)
                     continue
             try:

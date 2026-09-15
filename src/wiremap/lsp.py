@@ -29,11 +29,16 @@ class Lsp:
             stderr=subprocess.DEVNULL,
             bufsize=0,
         )
-        self.call(
-            "initialize",
-            {"processId": None, "rootUri": root.as_uri(), "capabilities": {}},
-        )
-        self.notify("initialized", {})
+        try:
+            self.call(
+                "initialize",
+                {"processId": None, "rootUri": root.as_uri(), "capabilities": {}},
+            )
+            self.notify("initialized", {})
+        except BaseException:
+            self.p.kill()
+            self.p.wait()
+            raise
 
     def _wait(self) -> None:
         # ponytail: select is only authoritative because stdout is unbuffered

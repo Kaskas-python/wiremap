@@ -105,7 +105,7 @@ def test_summarize_roundtrip(repo, capsys, monkeypatch):
     assert "no summary yet" in out
 
 
-def test_communities_and_graph(repo, capsys, tmp_path, tmp_path_factory):
+def test_communities_and_graph(repo, capsys, tmp_path_factory):
     out, _, _ = run(capsys, "--repo", str(repo), "communities")
     row = next(r for r in out.splitlines() if "app.graph.classify" in r)
     assert "app.graph.route_fn" in row
@@ -116,7 +116,7 @@ def test_communities_and_graph(repo, capsys, tmp_path, tmp_path_factory):
         "--format", "dot",
     )
     assert out.startswith("digraph")
-    html = tmp_path / "out.html"
+    html = tmp_path_factory.mktemp("html") / "out.html"
     run(capsys, "--repo", str(repo), "graph", "--html", str(html))
     t = html.read_text()
     assert "<canvas" in t and "app.graph.handle" in t

@@ -7,7 +7,11 @@ class RepoError(Exception): ...
 
 def _git(root, *a) -> str:
     return subprocess.run(
-        ["git", "-C", str(root), *a], capture_output=True, text=True, check=True
+        ["git", "-C", str(root), *a],
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
     ).stdout.strip()
 
 
