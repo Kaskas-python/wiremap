@@ -40,20 +40,20 @@ No grep would have found either edge.
 
 ## Install
 
+Not on PyPI yet — install from the repository (26 s on a clean machine, no Node or npm needed):
+
 ```console
-$ uv tool install wiremap
+$ uv tool install 'wiremap[go,rust,lsp] @ git+https://github.com/Kaskas-python/wiremap'
 $ wiremap install-skill      # copies SKILL.md to ~/.claude/skills/wiremap/
+$ wiremap install-hook       # prints the settings.json hook block and statusline suffix to paste
 ```
 
-### Optional extras
+### Extras
 
-```console
-$ uv tool install 'wiremap[go,rust]'   # Go and Rust grammars
-```
-
-`uv tool install 'wiremap[lsp]'` bundles pyright with Node for `--lsp`; the TypeScript
-server is installed once by npm into `~/.cache/wiremap/node` on first `--lsp` use
-(network needed once).
+`go` and `rust` add those grammars. `lsp` bundles pyright with Node for `--lsp`; the
+TypeScript server is installed once by npm into `~/.cache/wiremap/node` on first `--lsp` use
+(network needed once). Plain `uv tool install 'wiremap @ git+https://github.com/Kaskas-python/wiremap'`
+gives Python, TypeScript, SQL and Markdown only.
 
 ## Commands
 
