@@ -147,8 +147,9 @@ def test_hook_post_edit_capped(repo, capsys, monkeypatch):
     monkeypatch.setattr(sys, "stdin", io.StringIO(payload))
     out, _, code = run(capsys, "--repo", str(repo), "hook", "post-edit")
     assert code == 0
-    assert "get_db <- app.api.list_orders" in out
-    assert len(out.splitlines()) <= 22
+    ctx = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+    assert "get_db <- app.api.list_orders" in ctx
+    assert len(ctx.splitlines()) <= 22
     monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
     out, _, code = run(capsys, "--repo", str(repo), "hook", "post-edit")
     assert code == 0 and out.strip() == ""

@@ -77,7 +77,7 @@ typescript-language-server; the child processes are killed before exit.
 | `report` | Hubs, directories, communities, entry points, ambiguous names — a GRAPH_REPORT in one screen |
 | `ask TEXT` | Symbols whose names match the task text, ranked by match then degree |
 | `triage [--base REF]` | Files a reviewer should read for the branch diff, plus entry points touched |
-| `hook post-edit` | Claude Code PostToolUse hook: ≤ 20 cross-file EXTRACTED callers of symbols in the edited file, always exit 0 |
+| `hook post-edit` | Claude Code PostToolUse hook: ≤ 20 cross-file EXTRACTED callers of symbols in the edited file, always exit 0, as PostToolUse additionalContext JSON |
 | `install-hook` | Prints the settings.json hook block and statusline suffix to paste |
 | `status` | One statusline segment from the last build's stats; never parses |
 | `summarize --files PATH... \| --write PATH` | Agent-written ≤ 10-line notes per file, cached by content hash; `--write` reads the note from stdin |
@@ -95,7 +95,7 @@ partially).
 
 The hook is deliberately small: at most 20 rows, only cross-file callers, only EXTRACTED
 edges, and only symbols whose name is at least 6 characters (a repo-wide `get` or `run`
-would bury the useful rows). It runs with a 5 s timeout and **always exits 0** — a hook
+would bury the useful rows). It runs with a 10 s timeout and **always exits 0** — a hook
 that fails is silent, never an error in your editor.
 
 The statusline suffix captures stdin once and replays it to your existing command, so an

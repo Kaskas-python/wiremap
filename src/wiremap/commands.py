@@ -794,20 +794,29 @@ def hook_post_edit(g: Graph, root: Path, payload: str) -> str:
     if not rows:
         return ""
     more = [f"… and {len(rows) - HOOK_CAP} more"] if len(rows) > HOOK_CAP else []
-    return "\n".join(
+    text = "\n".join(
         ["wiremap: cross-file callers of edited symbols"] + rows[:HOOK_CAP] + more
+    )
+    # ponytail: plain PostToolUse stdout never reaches the model; additionalContext does
+    return json.dumps(
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "PostToolUse",
+                "additionalContext": text,
+            }
+        }
     )
 
 
 HOOK_JSON = (
     '{"matcher": "Write|Edit", "hooks": [{"type": "command", "command": '
-    '"wiremap hook post-edit", "timeout": 5, "statusMessage": '
+    '"wiremap hook post-edit", "timeout": 10, "statusMessage": '
     '"wiremap: cross-file callers"}]}'
 )
 STATUS_LINE = (
     "in=$(cat); printf '%s' \"$in\" | <EXISTING statusLine.command>; printf \" \"; "
     "wiremap --repo \"$(printf '%s' \"$in\" | "
-    "jq -r '.workspace.current_dir // \".\"' 2>/dev/null)\" status 2>/dev/null"
+    "jq -r '.workspace.current_dir // \".\"' 2>/dev/null)\" status 2>/dev/null || true"
 )
 
 
