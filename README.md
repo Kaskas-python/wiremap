@@ -29,11 +29,13 @@ g.add_edge("classify", "handle")
 $ wiremap callers app.db.get_db
 app.api.list_orders  depends  EXTRACTED  app/api.py:5
 unresolved: 0
+name hits without an edge: 0
 
 $ wiremap callers app.graph.handle
 app.graph  graph_node  EXTRACTED  app/graph.py:10
 app.graph.classify  graph_edge  EXTRACTED  app/graph.py:11
 unresolved: 0
+name hits without an edge: 0
 ```
 
 No grep would have found either edge.
@@ -67,18 +69,19 @@ typescript-language-server; the child processes are killed before exit.
 | Command | What it prints |
 |---|---|
 | `skeleton <path>...` | One line per definition, indented by nesting |
-| `callers <symbol> [--depth N] [--min-confidence extracted]` | Who calls, injects, routes to or queues this symbol |
+| `callers <symbol> [--depth N] [--min-confidence extracted]` | Who calls, injects, routes to or queues this symbol, then `name hits without an edge: N` — bare-name grep hits the graph has no edge for (production first, 5 shown) |
 | `deps <path\|symbol> [--depth N]` | What it calls, plus dynamic-dispatch notices |
 | `grep <regex>` | git grep hits grouped by enclosing symbol |
-| `pack --files <path>... [--task TEXT]` | A ≤15-line context pack for a brief |
+| `pack --files <path>... [--task TEXT]` | A ≤15-line context pack for a brief: stamp, definitions, callers (tests last), entry points — every section keeps up to 3 rows before any grows, and a trimmed section ends in a `… N more <how to see the rest>` census line |
 | `entrypoints` | Routes, tasks and graph roots |
 | `communities` | Clusters of connected symbols with their hub (label propagation) |
 | `graph [SYMBOL] [--files PATH...] [--format mermaid\|dot\|graphml\|cypher] [--html PATH]` | The neighbourhood as Mermaid (default), DOT, GraphML, Cypher, or a self-contained HTML viewer |
 | `export --obsidian DIR` | One Markdown page per file with wikilinked calls/callers (Obsidian vault or agent-crawlable wiki) |
 | `report` | Hubs, directories, communities, entry points, ambiguous names — a GRAPH_REPORT in one screen |
 | `ask TEXT` | Symbols whose names match the task text, ranked by match then degree |
-| `triage [--base REF]` | Files a reviewer should read for the branch diff, plus entry points touched |
-| `hook post-edit` | Claude Code PostToolUse hook: ≤ 20 cross-file EXTRACTED callers of symbols in the edited file, always exit 0, as PostToolUse additionalContext JSON |
+| `triage [--base REF]` | Files a reviewer should read for the branch diff, plus entry points touched; untracked files count as changed |
+| `impact [--base REF]` | For a review brief: cross-file callers of changed symbols that are outside the diff — production first, test callers collapsed to a count, name-only leads last |
+| `hook [post-edit]` | Claude Code PostToolUse hook (the subcommand is optional): ≤ 20 cross-file EXTRACTED callers of symbols in the edited file, always exit 0, as PostToolUse additionalContext JSON |
 | `install-hook` | Prints the settings.json hook block and statusline suffix to paste |
 | `status` | One statusline segment from the last build's stats; never parses |
 | `summarize --files PATH... \| --write PATH` | Agent-written ≤ 10-line notes per file, cached by content hash; `--write` reads the note from stdin |
@@ -97,7 +100,13 @@ partially).
 The hook is deliberately small: at most 20 rows, only cross-file callers, only EXTRACTED
 edges, and only symbols whose name is at least 6 characters (a repo-wide `get` or `run`
 would bury the useful rows). It runs with a 10 s timeout and **always exits 0** — a hook
-that fails is silent, never an error in your editor.
+that fails is silent, never an error in your editor. The command is guarded with
+`command -v wiremap >/dev/null && … || true`, so a machine without wiremap on `PATH` is a
+no-op rather than a failing hook.
+
+Recommended **off** while you are measuring whether the tool changes agent behaviour: it
+fires on every `Write|Edit` regardless of whether anyone asked, which makes it impossible
+to tell deliberate use from ambient noise. Turn it on once the deliberate-use counters move.
 
 The statusline suffix captures stdin once and replays it to your existing command, so an
 already-configured statusline keeps working; `wiremap status` then appends one segment
@@ -112,7 +121,8 @@ Every edge carries its confidence, and ambiguity is reported rather than guessed
 - **EXTRACTED** — a literal reference in the source. Treat it as fact.
 - **INFERRED** — matched by unique name across the repo. Confirm before relying on it.
 - **`unresolved: N`** — N candidates shared that name, so no edge was recorded. A
-  non-zero count means grep before concluding there are no callers. `deps` prints
+  non-zero count means grep before concluding there are no callers — `callers` therefore
+  greps the bare name and lists hits without an edge. `deps` prints
   `unresolved: N` — the number of ambiguous callee names it had to drop.
 
 Cross-artifact edges follow the same rule. `table_ref` is EXTRACTED from a `CREATE TABLE`
@@ -153,8 +163,9 @@ Add a framework: one `Rule`, one fixture file, one assertion.
   function named `delay`/`apply_async`.
 - Files over 1 MB are skipped (stderr notice + `skipped_too_large` stat).
 - `grep` exits `2` on an invalid regex or after 30 s.
-- Untracked files are invisible to `triage` — it reads the diff, and git does not diff
-  what it does not track.
+- `triage` and `impact` count every symbol in an untracked file as changed, on top of the
+  diff hunks — a brand-new file inflates `changed: N`, and neither command distinguishes
+  "changed by the diff" from "new and untracked".
 - `export --obsidian` refuses a DIR inside the repo unless it is gitignored. A `dir/`
   pattern only matches once the directory exists, so `mkdir` it first or use a slashless
   pattern.

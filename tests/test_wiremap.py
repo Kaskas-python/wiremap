@@ -6,6 +6,7 @@ import sys
 import pytest
 
 from wiremap.cli import main
+from wiremap.commands import _fit
 from wiremap.lsp import _bin
 
 
@@ -34,21 +35,28 @@ def test_ambiguous_name_lists_candidates(repo, capsys):
 def test_callers_none_is_explicit(repo, capsys):
     out, _, code = run(capsys, "--repo", str(repo), "callers", "app.unused.orphan")
     assert code == 0 and "no callers found" in out and "unresolved: 0" in out
+    out, _, _ = run(capsys, "--repo", str(repo), "callers", "send_mail")
+    assert "name hits without an edge: 1" in out and "app/dispatch.py:2" in out
 
 
 def test_pack_fits_15_lines(repo, capsys):
     out, _, _ = run(
-        capsys, "--repo", str(repo), "pack", "--files", "app/api.py", "app/graph.py"
+        capsys, "--repo", str(repo), "pack", "--files", "app/db.py", "app/svc.py"
     )
     lines = out.rstrip().splitlines()
     assert len(lines) <= 15 and lines[0].startswith("HEAD ") and "STOP" in lines[-1]
-    assert "… and" not in out
+    assert "caller: get_db <- app.api.list_orders" in out
+    assert "def load( o: Order, ):" in out
+    assert "… " not in out
+    assert _fit([list("abcdefgh"), list("ijklmnop"), []], ["d", "c", "e"], 8) == [
+        "a", "b", "c", "… 5 more d", "i", "j", "k", "… 5 more c",
+    ]
 
 
 def test_cache_hit_skips_parse(repo, capsys):
     run(capsys, "--repo", str(repo), "--stats", "entrypoints")
     _, err, _ = run(capsys, "--repo", str(repo), "--stats", "entrypoints")
-    assert "cache_hits=14" in err
+    assert "cache_hits=15" in err
 
 
 def test_language_dropin(repo, capsys):
@@ -140,6 +148,12 @@ def test_triage_lists_changed_callers(repo, capsys):
     assert "app/api.py" in out
     _, _, code = run(capsys, "--repo", str(repo), "triage", "--base", "nosuch")
     assert code == 2
+    out, _, _ = run(capsys, "--repo", str(repo), "impact", "--base", "HEAD")
+    assert "get_db <- app.api.list_orders" in out and "candidates" in out
+    before = run(capsys, "--repo", str(repo), "triage", "--base", "HEAD")[0].split()[1]
+    (repo / "app/new.py").write_text("def fresh():\n    return 1\n")
+    after = run(capsys, "--repo", str(repo), "triage", "--base", "HEAD")[0].split()[1]
+    assert int(after) > int(before)
 
 
 def test_hook_post_edit_capped(repo, capsys, monkeypatch):
@@ -153,6 +167,8 @@ def test_hook_post_edit_capped(repo, capsys, monkeypatch):
     monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
     out, _, code = run(capsys, "--repo", str(repo), "hook", "post-edit")
     assert code == 0 and out.strip() == ""
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+    assert run(capsys, "--repo", str(repo), "hook")[2] == 0
 
 
 def test_status_reads_stats_only(repo, capsys):

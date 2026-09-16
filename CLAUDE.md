@@ -5,7 +5,7 @@ run from any git checkout or worktree: parses Python, TypeScript, Go and Rust wi
 plus SQL schemas and Markdown docs, into an in-memory graph on every call (symbols, imports,
 calls, plus framework edges for FastAPI, LangGraph, SQLAlchemy and Celery) and answers
 `callers`, `deps`, `skeleton`, `grep`, `entrypoints`, `pack`, `communities`, `graph`, `export`,
-`report`, `ask`, `triage`, `hook`, `status` and `summarize`. Persisted state lives only under
+`report`, `ask`, `triage`, `impact`, `hook`, `status` and `summarize`. Persisted state lives only under
 `~/.cache/wiremap/`: parse entries, summaries, last stats, `node/`.
 
 Stack: Python ≥ 3.10 · uv · hatchling · tree-sitter (exact pins) · pytest. Public repo

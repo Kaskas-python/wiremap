@@ -28,7 +28,13 @@ def head_stamp(root: Path) -> str:
     except subprocess.CalledProcessError:
         return "no-commit"
     branch = _git(root, "branch", "--show-current")
-    return f"{sha} {branch or '(detached)'}"
+    rows = _git(root, "status", "--porcelain", "--untracked-files=all").splitlines()
+    unt = sum(r.startswith("??") for r in rows)
+    mod = len(rows) - unt
+    drift = (f" +{mod} modified" if mod else "") + (
+        f" +{unt} untracked" if unt else ""
+    )
+    return f"{sha} {branch or '(detached)'}{drift}"
 
 
 EXTS = {

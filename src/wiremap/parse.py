@@ -98,6 +98,13 @@ def module_of(rel: str) -> str:
     return rel.removeprefix("src/").rsplit(".", 1)[0].replace("/", ".")
 
 
+def _signature(n: Node) -> str:
+    body = n.child_by_field_name("body")
+    text = n.text[: body.start_byte - n.start_byte] if body else n.text
+    sig = " ".join(text.decode(errors="replace").split())
+    return sig[:160] + "…" if len(sig) > 160 else sig
+
+
 def _table(name: str, rel: str, i: int, sig: str) -> Symbol:
     n = name.lower()
     return Symbol(
@@ -205,7 +212,7 @@ def parse_file(path: Path, root: Path, lang: str) -> tuple[list[Symbol], list[Ra
             qualname=q,
             line_start=n.start_point[0] + 1,
             line_end=n.end_point[0] + 1,
-            signature=n.text.decode().splitlines()[0],
+            signature=_signature(n),
         )
         for (n, q), kind in zip(defs, kinds)
     ]
@@ -310,6 +317,7 @@ SCHEMA = hashlib.sha1(
         + ",".join(f.name for f in dataclasses.fields(RawEdge))
         + "calls:callee-pos"
         + "src-root"
+        + "sig:span-cut"
     ).encode()
 ).hexdigest()[:12]
 

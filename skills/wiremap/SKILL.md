@@ -1,13 +1,12 @@
 ---
 name: wiremap
-description: Answer "where is this called", "what depends on this", "blast radius", "what does this file expose" with the wiremap CLI (framework-aware callers/deps/skeleton, never stale); and produce the context pack for any implementer or reviewer brief. Load before editing a symbol, before reading a whole file, when writing a brief, and when reviewing a diff.
+description: Framework-aware callers, deps, skeletons, context packs and review-time impact lists from the wiremap CLI, never stale. For Fable writing briefs, reviewers and researchers; implementers get the pack inside their brief.
 ---
 # wiremap
-Every command takes `--repo <root>` before the subcommand; a worktree-isolated agent (reviewer or implementer) passes the main tree as <root>, never its own worktree.
-1. Before editing a symbol: `wiremap callers <symbol>`. EXTRACTED = fact; INFERRED = lead to confirm; a non-zero `unresolved:` line means grep before assuming there are no callers.
-2. Before reading a whole file: `wiremap skeleton <path>`; open the file only for the functions you will touch.
-3. When writing a brief: `wiremap --repo <root> pack --files <paths> --task "<one line>"` and paste the output verbatim as the context pack.
-4. When reviewing: `wiremap callers` on every changed public symbol; check each caller against the diff.
+`--repo <root>` goes before the subcommand; a worktree-isolated agent passes the main tree.
+Every caller list is a candidate list: string dispatch (`send_task`, `getattr`) is invisible, so grep the bare name before concluding "no callers". EXTRACTED = fact; INFERRED = name-only lead.
+1. Implementer brief (Fable): `wiremap --repo <root> pack --files <paths> --task "<one line>"`, pasted verbatim under your own assertion lines (imports present or absent, prohibitions, nullability, each with file:line). A file under ~60 lines is pasted instead of packed.
+2. Review brief (Fable): `wiremap --repo <root> impact --base <target>`, pasted verbatim. Reviewer: every listed caller outside the diff is a finding or one line "unaffected because …".
+3. Reviewer on demand: `wiremap callers <symbol id>` for a changed public symbol the impact list capped; `triage --base <target>` for the files to read.
+4. Researcher: `skeleton <file>` before opening a file, `deps` and `callers` for the hops; cite file:line.
 5. The tool never outranks the code: on any contradiction, STOP and report BLOCKED.
-6. Reviewing a branch: `wiremap triage --base <target>` first; every listed file is read.
-7. Unfamiliar file and the skeleton is not enough: `wiremap summarize --files <path>`; if it says no summary yet, read the file and store your own ≤ 10-line note with `wiremap summarize --write <path>` (stdin) so the next agent gets it free.

@@ -14,6 +14,7 @@ from wiremap.commands import (
     graph,
     grep,
     hook_post_edit,
+    impact,
     install_hook,
     install_skill,
     pack,
@@ -36,6 +37,7 @@ _SINGLE_ROOT = (
     "summarize",
     "export",
     "triage",
+    "impact",
 )
 
 
@@ -110,6 +112,9 @@ def build_parser() -> argparse.ArgumentParser:
     tr = sub.add_parser("triage")
     tr.add_argument("--base", default="main")
 
+    im = sub.add_parser("impact")
+    im.add_argument("--base", default="main")
+
     ak = sub.add_parser("ask")
     ak.add_argument("text", metavar="TEXT")
     sub.add_parser("entrypoints")
@@ -117,7 +122,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("install-hook")
 
     hk = sub.add_parser("hook")
-    hks = hk.add_subparsers(dest="hook_cmd", required=True)
+    hks = hk.add_subparsers(dest="hook_cmd")
     hks.add_parser("post-edit")
 
     cache = sub.add_parser("cache")
@@ -198,7 +203,9 @@ def main(argv=None) -> int:
     if args.cmd == "skeleton":
         text, code = skeleton(g, root, args.paths)
     elif args.cmd == "callers":
-        text, code = callers(g, args.symbol, args.depth, args.min_confidence.upper())
+        text, code = callers(
+            g, root, args.symbol, args.depth, args.min_confidence.upper()
+        )
     elif args.cmd == "deps":
         text, code = deps(g, root, args.target, args.depth)
     elif args.cmd == "grep":
@@ -223,6 +230,11 @@ def main(argv=None) -> int:
         text, code = report(g, root), EXIT_OK
     elif args.cmd == "triage":
         text, code = triage(g, root, args.base)
+        if code == 2:
+            print(text, file=sys.stderr)
+            return code
+    elif args.cmd == "impact":
+        text, code = impact(g, root, args.base)
         if code == 2:
             print(text, file=sys.stderr)
             return code

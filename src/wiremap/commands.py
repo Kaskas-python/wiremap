@@ -6,14 +6,29 @@ import subprocess
 import sys
 import time
 from collections import Counter, defaultdict
+from itertools import zip_longest
 from pathlib import Path
 
 from wiremap.discover import RepoError, _git, head_stamp
-from wiremap.parse import Symbol, cache_dir, module_of, write_atomic
+from wiremap.parse import Symbol, cache_dir, write_atomic
 from wiremap.resolve import Edge, Graph
 
 CAP = 40
 GREP_TIMEOUT = 30
+NAME_HITS_SHOWN = 5
+PACK_LINES = 15
+
+
+def _is_test(file: str) -> bool:
+    # ponytail: path heuristic — the graph has no test concept, so a test is a
+    # directory named test* or a conventional test filename; a source file merely
+    # named test.py stays production; upgrade: none
+    p = Path(file)
+    return (
+        any(d.startswith("test") for d in p.parts[:-1])
+        or p.name.startswith("test_")
+        or p.name.endswith(("_test.py", "_test.go", ".spec.ts", ".test.ts"))
+    )
 
 
 def _top(rows: list[str], n: int) -> list[str]:
@@ -33,8 +48,54 @@ def _find(g: Graph, symbol: str) -> tuple[list[str], int]:
     return ids, 1
 
 
+def _name_hits(g: Graph, root: Path, symbol: str) -> list[str]:
+    # ponytail: string dispatch is invisible to the parser, so the bare name is
+    # grepped and every hit without an edge is listed; upgrade: none wanted
+    s = g.symbols[symbol]
+    known = {(e.file, e.line) for e in g.edges if e.dst == symbol}
+    try:
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "grep",
+                "-n",
+                "-I",
+                "-w",
+                "-F",
+                "-z",
+                "--untracked",
+                "-e",
+                s.name,
+                "--",
+            ],
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=GREP_TIMEOUT,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return ["name hits: grep timed out"]
+    if proc.returncode > 1:
+        return ["name hits: unavailable"]
+    rows = []
+    for row in proc.stdout.split("\n"):
+        parts = row.split("\0", 2)
+        if len(parts) == 3 and parts[1].isdigit() and parts[0] != s.file:
+            if (parts[0], int(parts[1])) not in known:
+                text = parts[2].strip()
+                text = text[:80] + "…" if len(text) > 80 else text
+                rows.append((_is_test(parts[0]), f"  {parts[0]}:{parts[1]}: {text}"))
+    rows.sort()
+    return [f"name hits without an edge: {len(rows)}"] + [
+        r for _, r in rows[:NAME_HITS_SHOWN]
+    ]
+
+
 def callers(
-    g: Graph, symbol: str, depth: int = 1, min_conf: str = "INFERRED"
+    g: Graph, root: Path, symbol: str, depth: int = 1, min_conf: str = "INFERRED"
 ) -> tuple[str, int]:
     ids, code = _find(g, symbol)
     if code:
@@ -58,7 +119,9 @@ def callers(
     rows.sort(key=lambda r: ("INFERRED" in r, r))
     body = _cap(rows) or ["no callers found"]
     unresolved = g.unresolved.get(symbol.split(".")[-1], 0)
-    return "\n".join(body + [f"unresolved: {unresolved}"]), 0
+    return "\n".join(
+        body + [f"unresolved: {unresolved}"] + _name_hits(g, root, ids[0])
+    ), 0
 
 
 def _rel(root: Path, p: str) -> str | None:
@@ -74,7 +137,14 @@ def _rel(root: Path, p: str) -> str | None:
     return str(rel) if q.is_file() else None
 
 
-_DYNAMIC = ("getattr(", "importlib", "globals()[")
+_DYNAMIC = (
+    "getattr(",
+    "importlib",
+    "globals()[",
+    "send_task(",
+    "apply_async(",
+    "setattr(",
+)
 
 
 def deps(g: Graph, root: Path, target: str, depth: int = 1) -> tuple[str, int]:
@@ -192,11 +262,10 @@ def grep(g: Graph, root: Path, pattern: str) -> tuple[str, int]:
     return "\n".join(_cap(body) or ["no matches"]), 0
 
 
-STOP = "If this pack contradicts the code or HEAD differs, STOP and report BLOCKED."
-
-
-def _id_prefix(file: str) -> str:
-    return module_of(file) + "."
+STOP = (
+    "Callers are candidates (string dispatch is invisible). "
+    "If this pack contradicts the code or the stamp differs, STOP and report BLOCKED."
+)
 
 
 def _symbols_in(g: Graph, file: str) -> list[Symbol]:
@@ -204,6 +273,31 @@ def _symbols_in(g: Graph, file: str) -> list[Symbol]:
         (s for s in g.symbols.values() if s.file == file and s.kind != "table"),
         key=lambda s: s.line_start,
     )
+
+
+def _fit(
+    sections: list[list[str]], hints: list[str], budget: int, floor: int = 3
+) -> list[str]:
+    # ponytail: every section keeps up to `floor` rows before any section grows;
+    # a row that does not fit is skipped, not stopped on — finishing a section
+    # drops its marker, so a later row can still fit
+    order = [(i, r) for i, s in enumerate(sections) for r in s[:floor]]
+    order += [(i, r) for i, s in enumerate(sections) for r in s[floor:]]
+    kept: list[list[str]] = [[] for _ in sections]
+    for i, r in order:
+        markers = sum(
+            len(k) + (i == j) < len(s)
+            for j, (k, s) in enumerate(zip(kept, sections))
+        )
+        if sum(map(len, kept)) + 1 + markers > budget:
+            continue
+        kept[i].append(r)
+    out: list[str] = []
+    for k, s, h in zip(kept, sections, hints):
+        out += k
+        if len(k) < len(s):
+            out.append(f"\u2026 {len(s) - len(k)} more {h}")
+    return out
 
 
 def pack(
@@ -216,51 +310,44 @@ def pack(
             return f"not found: {p}", 1
         rels.append(rel)
     rels = list(dict.fromkeys(rels))
-    head = [f"HEAD {head_stamp(root)}"] + ([f"task: {task}"] if task else [])
-    ep = [
-        line
-        for line in entrypoints(g).splitlines()
-        if any(line.startswith(_id_prefix(f)) for f in rels)
-    ]
+    one_line = task.replace("\n", " ") if task else None
+    head = [f"HEAD {head_stamp(root)}"] + ([f"task: {one_line}"] if one_line else [])
     fl = [f"files: {', '.join(rels)}"]
-    ca = [
-        f"caller: {r}"
-        for f in rels
-        for s in _symbols_in(g, f)
-        for r in callers(g, s.id)[0].splitlines()
-        if "  " in r and not r.startswith("unresolved")
-    ]
-    sk = [
-        "  " * s.qualname.count(".") + s.signature
-        for f in rels
-        for s in _symbols_in(g, f)
-    ]
-    rel = (
-        [
-            f"related: {s.id}  {s.file}:{s.line_start}"
-            for s, _m, _d in _ask_rows(g, task)[:5]
-        ]
-        if task
-        else []
+    syms = {f: _symbols_in(g, f) for f in rels}
+    owner = {s.id: f for f, ss in syms.items() for s in ss}
+    ep = sorted(
+        f"entrypoint: {e.dst}  {e.kind}  {e.file}:{e.line}"
+        for e in g.edges
+        if e.kind in ("route", "task") and e.dst in owner
     )
-    sections = [ep, fl, ca, rel, sk]
-    nouns = {
-        id(ep): "entry points",
-        id(ca): "callers",
-        id(rel): "related",
-        id(sk): "definitions",
-    }
-    for sec in (rel, sk, ca, ep):
-        dropped = 0
-        while len(head) + sum(map(len, sections)) + 1 > 15 and sec:
-            sec.pop()
-            dropped += 1
-        if dropped:
-            if sec:
-                sec[-1] = f"… and {dropped + 1} more"
-            else:
-                sec.append(f"… and {dropped} more {nouns[id(sec)]}")
-    return "\n".join(head + [ln for s in sections for ln in s] + [STOP]), 0
+    ca_files, sk_files = [], []
+    for f, ss in syms.items():
+        rows = sorted(
+            (
+                _is_test(e.file),
+                f"caller: {g.symbols[e.dst].name} <- {e.src}  {e.file}:{e.line}",
+            )
+            for e in g.edges
+            if owner.get(e.dst) == f
+            and e.confidence == "EXTRACTED"
+            and e.kind not in ("mentions", "imports")
+            and e.file != f
+        )
+        ca_files.append(rows)
+        sk_files.append(["  " * s.qualname.count(".") + s.signature for s in ss])
+    pairs = [p for rows in zip_longest(*ca_files) for p in rows if p]
+    ca = [r for _, r in sorted(pairs, key=lambda p: p[0])]
+    sk = [r for rows in zip_longest(*sk_files) for r in rows if r]
+    body = _fit(
+        [sk, ca, ep],
+        [
+            f"definitions: wiremap skeleton {' '.join(rels)}",
+            "callers (tests last): wiremap callers <symbol id>",
+            "entry points",
+        ],
+        PACK_LINES - len(head) - len(fl) - 1,
+    )
+    return "\n".join(head + fl + body + [STOP]), 0
 
 
 def install_skill() -> str:
@@ -720,11 +807,11 @@ _DIFF_OPTS = (
 )
 
 
-def triage(g: Graph, root: Path, base: str = "main") -> tuple[str, int]:
+def _changed(g: Graph, root: Path, base: str) -> set[str] | None:
     try:
         _git(root, "rev-parse", "--verify", "--quiet", base)
     except subprocess.CalledProcessError:
-        return f"unknown --base {base}", 2
+        return None
     try:
         diff = _git(root, *_DIFF_OPTS, f"{base}...HEAD", "--")
     except subprocess.CalledProcessError:
@@ -732,12 +819,13 @@ def triage(g: Graph, root: Path, base: str = "main") -> tuple[str, int]:
         # there is no range to diff; upgrade: none — the working tree still counts
         diff = ""
     diff += "\n" + _git(root, *_DIFF_OPTS, "HEAD", "--")
-    # ponytail: untracked files are invisible to triage;
-    # upgrade: add `git ls-files --others` symbols as changed
+    untracked = set(
+        _git(root, "ls-files", "--others", "--exclude-standard").splitlines()
+    )
     syms_by_file: dict[str, list[Symbol]] = defaultdict(list)
     for s in g.symbols.values():
         syms_by_file[s.file].append(s)
-    changed: set[str] = set()
+    changed = {s.id for f in untracked for s in syms_by_file.get(f, [])}
     f = None
     for l in diff.splitlines():
         if l.startswith("+++ "):
@@ -750,6 +838,72 @@ def triage(g: Graph, root: Path, base: str = "main") -> tuple[str, int]:
                 for s in syms_by_file.get(f, [])
                 if s.line_start <= b and a <= s.line_end
             }
+    return changed
+
+
+IMPACT_MAX = 1000
+IMPACT_PER_SYMBOL = 3
+CANDIDATES = (
+    "Callers are candidates: string dispatch is invisible \u2014 "
+    "grep the bare name of every changed public symbol."
+)
+
+
+def impact(g: Graph, root: Path, base: str = "main") -> tuple[str, int]:
+    changed = _changed(g, root, base)
+    if changed is None:
+        return f"unknown --base {base}", 2
+    if not changed:
+        return "no changes", 0
+    if len(changed) > IMPACT_MAX:
+        return (
+            f"changed: {len(changed)} symbols, more than {IMPACT_MAX}; "
+            "pass the branch's real --base",
+            2,
+        )
+    hits = sorted(
+        (
+            e.confidence != "EXTRACTED",
+            _is_test(e.file),
+            f"{g.symbols[e.dst].name} <- {e.src}  {e.file}:{e.line}",
+            e.dst,
+        )
+        for e in g.edges
+        if e.dst in changed
+        and e.src not in changed
+        and e.kind not in ("mentions", "imports")
+    )
+    tests = sum(1 for c, t, _, _ in hits if not c and t)
+    leads = [f"unconfirmed (name-only): {r}" for c, _, r, _ in hits if c]
+    by_dst: dict[str, list[str]] = defaultdict(list)
+    for c, t, r, dst in hits:
+        if not c and not t:
+            by_dst[dst].append(r)
+    fact = []
+    for dst, rows in by_dst.items():
+        fact += rows[:IMPACT_PER_SYMBOL]
+        if len(rows) > IMPACT_PER_SYMBOL:
+            fact.append(
+                f"  \u2026 {len(rows) - IMPACT_PER_SYMBOL} more callers of {dst}: "
+                f"wiremap callers {dst}"
+            )
+    body = _cap(fact) or ["no cross-file callers outside the diff"]
+    body += [f"+ {tests} test callers"] if tests else []
+    return (
+        "\n".join(
+            [f"HEAD {head_stamp(root)}", f"changed: {len(changed)} symbols vs {base}"]
+            + body
+            + _top(leads, 5)
+            + [CANDIDATES]
+        ),
+        0,
+    )
+
+
+def triage(g: Graph, root: Path, base: str = "main") -> tuple[str, int]:
+    changed = _changed(g, root, base)
+    if changed is None:
+        return f"unknown --base {base}", 2
     if not changed:
         return "no changes", 0
     by_file: dict[str, set[str]] = defaultdict(set)
@@ -823,7 +977,8 @@ def hook_post_edit(g: Graph, root: Path, payload: str) -> str:
 
 HOOK_JSON = (
     '{"matcher": "Write|Edit", "hooks": [{"type": "command", "command": '
-    '"wiremap hook post-edit", "timeout": 10, "statusMessage": '
+    '"command -v wiremap >/dev/null && wiremap hook post-edit || true", '
+    '"timeout": 10, "statusMessage": '
     '"wiremap: cross-file callers"}]}'
 )
 STATUS_LINE = (

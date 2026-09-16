@@ -27,8 +27,9 @@ FILES = {
         "    return 1\n"
     ),
     "app/other.py": "def get():\n    return 2\n",
+    "app/dispatch.py": 'def fire():\n    return send("app.tasks.send_mail")\n',
     "app/svc.py": (
-        "from app.db import Order\ndef load(o: Order):\n    return o.total()\n"
+        "from app.db import Order\ndef load(\n    o: Order,\n):\n    return o.total()\n"
     ),
     "app/graph.py": (
         "from langgraph.graph import StateGraph\n"
@@ -93,5 +94,5 @@ def repo(tmp_path, monkeypatch):
     monkeypatch.setenv(
         "PYRIGHT_PYTHON_CACHE_DIR", str(Path.home() / ".cache" / "pyright-python")
     )
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("HOME", str(tmp_path.parent / f"{tmp_path.name}-home"))
     return tmp_path
