@@ -27,7 +27,9 @@ def _is_test(file: str) -> bool:
     return (
         any(d.startswith("test") for d in p.parts[:-1])
         or p.name.startswith("test_")
-        or p.name.endswith(("_test.py", "_test.go", ".spec.ts", ".test.ts"))
+        or p.name.endswith(
+            ("_test.py", "_test.go", ".spec.ts", ".test.ts", ".spec.tsx", ".test.tsx")
+        )
     )
 
 
@@ -275,15 +277,14 @@ def _symbols_in(g: Graph, file: str) -> list[Symbol]:
     )
 
 
-def _fit(
-    sections: list[list[str]], hints: list[str], budget: int, floor: int = 3
-) -> list[str]:
-    # ponytail: every section keeps up to `floor` rows before any section grows;
-    # a row that does not fit is skipped, not stopped on — finishing a section
-    # drops its marker, so a later row can still fit
+def _fit(sections: list[list], budget: int, floor: int = 3) -> list[list]:
+    # ponytail: every section keeps up to `floor` items before any section grows;
+    # an item that does not fit is skipped, not stopped on — finishing a section
+    # drops its marker, so a later item can still fit. Selection only: the caller
+    # renders, so a section may hold tuples and be re-sorted before printing
     order = [(i, r) for i, s in enumerate(sections) for r in s[:floor]]
     order += [(i, r) for i, s in enumerate(sections) for r in s[floor:]]
-    kept: list[list[str]] = [[] for _ in sections]
+    kept: list[list] = [[] for _ in sections]
     for i, r in order:
         markers = sum(
             len(k) + (i == j) < len(s)
@@ -292,12 +293,7 @@ def _fit(
         if sum(map(len, kept)) + 1 + markers > budget:
             continue
         kept[i].append(r)
-    out: list[str] = []
-    for k, s, h in zip(kept, sections, hints):
-        out += k
-        if len(k) < len(s):
-            out.append(f"\u2026 {len(s) - len(k)} more {h}")
-    return out
+    return kept
 
 
 def pack(
@@ -321,32 +317,49 @@ def pack(
         if e.kind in ("route", "task") and e.dst in owner
     )
     ca_files, sk_files = [], []
-    for f, ss in syms.items():
-        rows = sorted(
-            (
-                _is_test(e.file),
-                f"caller: {g.symbols[e.dst].name} <- {e.src}  {e.file}:{e.line}",
+    for i, (f, ss) in enumerate(syms.items()):
+        best: dict[tuple[str, str], Edge] = {}
+        for e in g.edges:
+            if (
+                owner.get(e.dst) == f
+                and e.confidence == "EXTRACTED"
+                and e.kind not in ("mentions", "imports")
+                and e.file != f
+            ):
+                key = (e.dst, e.src)
+                if key not in best or e.line < best[key].line:
+                    best[key] = e
+        ca_files.append(
+            sorted(
+                (
+                    _is_test(e.file),
+                    f"caller: {g.symbols[e.dst].name} <- {e.src}  {e.file}:{e.line}",
+                )
+                for e in best.values()
             )
-            for e in g.edges
-            if owner.get(e.dst) == f
-            and e.confidence == "EXTRACTED"
-            and e.kind not in ("mentions", "imports")
-            and e.file != f
         )
-        ca_files.append(rows)
-        sk_files.append(["  " * s.qualname.count(".") + s.signature for s in ss])
+        sk_files.append(
+            [
+                (i, s.line_start, "  " * s.qualname.count(".") + s.signature)
+                for s in ss
+            ]
+        )
     pairs = [p for rows in zip_longest(*ca_files) for p in rows if p]
     ca = [r for _, r in sorted(pairs, key=lambda p: p[0])]
     sk = [r for rows in zip_longest(*sk_files) for r in rows if r]
-    body = _fit(
-        [sk, ca, ep],
-        [
-            f"definitions: wiremap skeleton {' '.join(rels)}",
-            "callers (tests last): wiremap callers <symbol id>",
-            "entry points",
-        ],
-        PACK_LINES - len(head) - len(fl) - 1,
-    )
+    sections = [sk, ca, ep]
+    hints = [
+        f"definitions: wiremap skeleton {' '.join(rels)}",
+        "callers (tests last): wiremap callers <symbol id>",
+        "entry points",
+    ]
+    kept = _fit(sections, PACK_LINES - len(head) - len(fl) - 1)
+    rendered = [[text for *_, text in sorted(kept[0])], kept[1], kept[2]]
+    body = []
+    for rows, k, s, h in zip(rendered, kept, sections, hints):
+        body += rows
+        if len(k) < len(s):
+            body.append(f"… {len(s) - len(k)} more {h}")
     return "\n".join(head + fl + body + [STOP]), 0
 
 

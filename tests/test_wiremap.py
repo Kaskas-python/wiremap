@@ -48,8 +48,9 @@ def test_pack_fits_15_lines(repo, capsys):
     assert "caller: get_db <- app.api.list_orders" in out
     assert "def load( o: Order, ):" in out
     assert "… " not in out
-    assert _fit([list("abcdefgh"), list("ijklmnop"), []], ["d", "c", "e"], 8) == [
-        "a", "b", "c", "… 5 more d", "i", "j", "k", "… 5 more c",
+    assert out.index("def load( o: Order, ):") > out.index("  def total(self):")
+    assert _fit([list("abcdefgh"), list("ijklmnop"), []], 8) == [
+        list("abc"), list("ijk"), [],
     ]
 
 

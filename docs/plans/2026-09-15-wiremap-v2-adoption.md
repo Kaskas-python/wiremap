@@ -512,6 +512,6 @@ features, remove the review-time integration (shape C).
 
 ## Ledger
 - Phase A: [x] A1 (review PASS r1; cap 5 production-first) · [x] A2 (review PASS r1; A2.1 floor-then-fill `_fit`, A2.2 global tests-last + one-line task + live assertion) · [x] A3 (review PASS r1; A3.1 `continue` + `…` markers + SCHEMA `sig:span-cut`; A3.2 `IMPACT_PER_SYMBOL = 3`, `_is_test` dirs-only + conventional filenames) · [x] A4 · [x] A5 — A3.1/A3.2/A4/A5 covered by the final branch review
-- Phase B: [ ] final review · [ ] /code-review · [ ] qa-e2e GO · [ ] push
-- Phase C: [ ] C1 · [ ] audit GO · [ ] C2 (user)
+- Phase B: [x] final review (r1 FAIL: skeleton interleave broke indentation → A2.3 select-by-interleave/render-in-source-order, caller dedupe, .tsx suffixes, real regression assertion; r2 PASS) · [ ] /code-review · [ ] qa-e2e GO · [ ] push
+- Phase C: [x] C1 (Sonnet stand-in, verbatim) · [x] audit GO (`~/Documents/claude_flow_notes/wiremap-integration/research/2026-09-16-config-audit-v2.md`; ~/.claude commit 3515ab3) · [ ] C2 (user: settings.json jq + `git push`)
 - Phase D: [x] D1 (review PASS r2; six findings fixed; keyword-prefix segments `do|then` uncounted — LOW, accepted) · [x] D2 baseline row (cli_calls 0, briefs 43, tool_packs 0, impact_briefs 0, hook 39/51558 B; `~/Documents/wiremap_notes/baselines/2026-09-15-adoption-baseline.md`) · [ ] D3 (after the next feature)

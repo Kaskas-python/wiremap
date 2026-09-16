@@ -72,7 +72,7 @@ typescript-language-server; the child processes are killed before exit.
 | `callers <symbol> [--depth N] [--min-confidence extracted]` | Who calls, injects, routes to or queues this symbol, then `name hits without an edge: N` — bare-name grep hits the graph has no edge for (production first, 5 shown) |
 | `deps <path\|symbol> [--depth N]` | What it calls, plus dynamic-dispatch notices |
 | `grep <regex>` | git grep hits grouped by enclosing symbol |
-| `pack --files <path>... [--task TEXT]` | A ≤15-line context pack for a brief: stamp, definitions, callers (tests last), entry points — every section keeps up to 3 rows before any grows, and a trimmed section ends in a `… N more <how to see the rest>` census line |
+| `pack --files <path>... [--task TEXT]` | A ≤15-line context pack for a brief: stamp, definitions, callers (tests last), entry points — every section keeps up to 3 rows before any grows, and a trimmed section ends in a `… N more <how to see the rest>` census line; callers shown are EXTRACTED only, name-inferred callers are not counted, one row per (callee, caller) pair, first call site |
 | `entrypoints` | Routes, tasks and graph roots |
 | `communities` | Clusters of connected symbols with their hub (label propagation) |
 | `graph [SYMBOL] [--files PATH...] [--format mermaid\|dot\|graphml\|cypher] [--html PATH]` | The neighbourhood as Mermaid (default), DOT, GraphML, Cypher, or a self-contained HTML viewer |
