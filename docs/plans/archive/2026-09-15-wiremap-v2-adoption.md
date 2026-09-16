@@ -510,6 +510,14 @@ features, remove the review-time integration (shape C).
 - `_signature` no-body fallback (Go `type_spec`, TS `lexical_declaration`) keeps a trailing comment on its first line (LOW, cosmetic).
 - `grep` has no unit test (budget at 25/25); covered by the qa-e2e gate scenario 10.
 - Keyword-prefixed shell segments (`do wiremap …`, `then wiremap …`) are not counted by wiremap-metrics (LOW).
+- qa-e2e 2026-09-16 (GO with findings, `~/Documents/wiremap_notes/qa-e2e/v2/verdict.md`), shipped unfixed:
+  - F1 `_name_hits` is noise for short/method names (TMS `PendingTaskStore.get` → 2197 hits in Dockerfile/README rows); restrict the grep to code extensions and/or suppress for class members.
+  - F2 `_is_test` treats any `test*` directory as tests, so `app/testing/harness.py` production callers land in `+ N test callers` of `impact`.
+  - F3 pack census markers: entry-points hint has no command; callers hint `wiremap callers <symbol id>` is not buildable from the bare `dst` name shown.
+  - F4 `head_stamp` returns `no-commit` without drift counts on a commit-less repo.
+  - F5 the 15-line pack contract bounds lines, not bytes (`files:` and `… N more definitions` rows exceed 200 chars on 12-file packs; `--task` echoed unbounded).
+  - F6 `impact` prints `+ 1 test callers`.
+  - `callers` in workspace (multi-`--repo`) mode has no name hits at all.
 
 ## User-owed items
 1. Plan acceptance (this doc) before the first delegation.
@@ -518,6 +526,6 @@ features, remove the review-time integration (shape C).
 
 ## Ledger
 - Phase A: [x] A1 (review PASS r1; cap 5 production-first) · [x] A2 (review PASS r1; A2.1 floor-then-fill `_fit`, A2.2 global tests-last + one-line task + live assertion) · [x] A3 (review PASS r1; A3.1 `continue` + `…` markers + SCHEMA `sig:span-cut`; A3.2 `IMPACT_PER_SYMBOL = 3`, `_is_test` dirs-only + conventional filenames) · [x] A4 · [x] A5 — A3.1/A3.2/A4/A5 covered by the final branch review
-- Phase B: [x] final review (r1 FAIL: skeleton interleave broke indentation → A2.3 select-by-interleave/render-in-source-order, caller dedupe, .tsx suffixes, real regression assertion; r2 PASS) · [x] /code-review (high: 10 confirmed findings → A6 fix round, then A7 AST comment blanking in `_signature` + SCHEMA `sig:span-nocomment-ast`; scoped reviews r3 FAIL → r4 PASS: impact cross-file guard, name-hits workspace skip + import-line skip, untracked -z, signature comment/no-body fallbacks, pack graph_root entry points, IMPACT_MAX wording, --no-optional-locks, shared _git_grep) · [ ] qa-e2e GO · [ ] push
+- Phase B: [x] final review (r1 FAIL: skeleton interleave broke indentation → A2.3 select-by-interleave/render-in-source-order, caller dedupe, .tsx suffixes, real regression assertion; r2 PASS) · [x] /code-review (high: 10 confirmed findings → A6 fix round, then A7 AST comment blanking in `_signature` + SCHEMA `sig:span-nocomment-ast`; scoped reviews r3 FAIL → r4 PASS: impact cross-file guard, name-hits workspace skip + import-line skip, untracked -z, signature comment/no-body fallbacks, pack graph_root entry points, IMPACT_MAX wording, --no-optional-locks, shared _git_grep) · [x] qa-e2e GO with findings (05b687c, F1–F6 → Follow-ups; marker stamped on the archive commit) · [x] push
 - Phase C: [x] C1 (Sonnet stand-in, verbatim) · [x] audit GO (`~/Documents/claude_flow_notes/wiremap-integration/research/2026-09-16-config-audit-v2.md`; ~/.claude commit 3515ab3) · [ ] C2 (user: settings.json jq + `git push`)
 - Phase D: [x] D1 (review PASS r2; six findings fixed; keyword-prefix segments `do|then` uncounted — LOW, accepted) · [x] D2 baseline row (cli_calls 0, briefs 43, tool_packs 0, impact_briefs 0, hook 39/51558 B; `~/Documents/wiremap_notes/baselines/2026-09-15-adoption-baseline.md`) · [ ] D3 (after the next feature)
