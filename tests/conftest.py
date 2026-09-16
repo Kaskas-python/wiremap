@@ -29,7 +29,7 @@ FILES = {
     "app/other.py": "def get():\n    return 2\n",
     "app/dispatch.py": 'def fire():\n    return send("app.tasks.send_mail")\n',
     "app/svc.py": (
-        "from app.db import Order\ndef load(\n    o: Order,\n):\n    return o.total()\n"
+        "from app.db import Order\ndef load(\n    o: Order,  # the order\n):\n    return o.total()\n"
     ),
     "app/graph.py": (
         "from langgraph.graph import StateGraph\n"

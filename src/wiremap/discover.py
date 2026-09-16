@@ -28,7 +28,9 @@ def head_stamp(root: Path) -> str:
     except subprocess.CalledProcessError:
         return "no-commit"
     branch = _git(root, "branch", "--show-current")
-    rows = _git(root, "status", "--porcelain", "--untracked-files=all").splitlines()
+    rows = _git(
+        root, "--no-optional-locks", "status", "--porcelain", "--untracked-files=all"
+    ).splitlines()
     unt = sum(r.startswith("??") for r in rows)
     mod = len(rows) - unt
     drift = (f" +{mod} modified" if mod else "") + (

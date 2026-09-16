@@ -50,46 +50,31 @@ def _find(g: Graph, symbol: str) -> tuple[list[str], int]:
     return ids, 1
 
 
+_IMPORT_PREFIXES = ("import ", "from ", "use ")
+
+
 def _name_hits(g: Graph, root: Path, symbol: str) -> list[str]:
     # ponytail: string dispatch is invisible to the parser, so the bare name is
     # grepped and every hit without an edge is listed; upgrade: none wanted
     s = g.symbols[symbol]
+    if ":" in s.file:
+        # ponytail: in workspace mode Symbol.file is "<repo>:<path>" while the grep
+        # runs on roots[0] only, so no path would ever match; upgrade: grep each root
+        return ["name hits: skipped in workspace mode"]
     known = {(e.file, e.line) for e in g.edges if e.dst == symbol}
-    try:
-        proc = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(root),
-                "grep",
-                "-n",
-                "-I",
-                "-w",
-                "-F",
-                "-z",
-                "--untracked",
-                "-e",
-                s.name,
-                "--",
-            ],
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=GREP_TIMEOUT,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return ["name hits: grep timed out"]
-    if proc.returncode > 1:
-        return ["name hits: unavailable"]
+    hits, err = _git_grep(root, ["-w", "-F", "--untracked"], s.name)
+    if err:
+        return [f"name hits: {err}"]
     rows = []
-    for row in proc.stdout.split("\n"):
-        parts = row.split("\0", 2)
-        if len(parts) == 3 and parts[1].isdigit() and parts[0] != s.file:
-            if (parts[0], int(parts[1])) not in known:
-                text = parts[2].strip()
-                text = text[:80] + "…" if len(text) > 80 else text
-                rows.append((_is_test(parts[0]), f"  {parts[0]}:{parts[1]}: {text}"))
+    for path, line, raw in hits:
+        text = raw.strip()
+        # ponytail: `imports` raws are dropped before edge construction, so an import
+        # line never carries an edge and would always read as a miss; upgrade: none
+        if path == s.file or text.startswith(_IMPORT_PREFIXES):
+            continue
+        if (path, line) not in known:
+            text = text[:80] + "\u2026" if len(text) > 80 else text
+            rows.append((_is_test(path), f"  {path}:{line}: {text}"))
     rows.sort()
     return [f"name hits without an edge: {len(rows)}"] + [
         r for _, r in rows[:NAME_HITS_SHOWN]
@@ -218,7 +203,9 @@ def _enclosing_symbol(syms: list[Symbol], line: int) -> str | None:
     return min(spans)[1] if spans else None
 
 
-def grep(g: Graph, root: Path, pattern: str) -> tuple[str, int]:
+def _git_grep(
+    root: Path, flags: list[str], pattern: str
+) -> tuple[list[tuple[str, int, str]], str | None]:
     try:
         proc = subprocess.run(
             [
@@ -228,9 +215,8 @@ def grep(g: Graph, root: Path, pattern: str) -> tuple[str, int]:
                 "grep",
                 "-n",
                 "-I",
-                "-E",
                 "-z",
-                "--untracked",
+                *flags,
                 "-e",
                 pattern,
                 "--",
@@ -242,20 +228,30 @@ def grep(g: Graph, root: Path, pattern: str) -> tuple[str, int]:
             check=False,
         )
     except subprocess.TimeoutExpired:
-        return f"grep: timed out after {GREP_TIMEOUT} s", 2
+        return [], f"timed out after {GREP_TIMEOUT} s"
     if proc.returncode > 1:
-        return proc.stderr.strip() or "grep: failed", 2
-    hits = []
+        return [], proc.stderr.strip() or "failed"
+    rows = []
     for row in proc.stdout.split("\n"):
         parts = row.split("\0", 2)
         if len(parts) == 3 and parts[1].isdigit():
-            hits.append((parts[0], int(parts[1]), parts[2].rstrip()))
+            rows.append((parts[0], int(parts[1]), parts[2]))
+    return rows, None
+
+
+def grep(g: Graph, root: Path, pattern: str) -> tuple[str, int]:
+    hits, err = _git_grep(root, ["-E", "--untracked"], pattern)
+    if err:
+        prefixed = err == "failed" or err.startswith("timed out")
+        return (f"grep: {err}" if prefixed else err), 2
     by_file = defaultdict(list)
     for s in g.symbols.values():
         by_file[s.file].append(s)
     groups = defaultdict(list)
     for f, ln, text in hits:
-        groups[_enclosing_symbol(by_file[f], ln) or f].append(f"  {f}:{ln}: {text}")
+        groups[_enclosing_symbol(by_file[f], ln) or f].append(
+            f"  {f}:{ln}: {text.rstrip()}"
+        )
     body = [
         row
         for k, v in sorted(groups.items())
@@ -311,10 +307,23 @@ def pack(
     fl = [f"files: {', '.join(rels)}"]
     syms = {f: _symbols_in(g, f) for f in rels}
     owner = {s.id: f for f, ss in syms.items() for s in ss}
-    ep = sorted(
-        f"entrypoint: {e.dst}  {e.kind}  {e.file}:{e.line}"
+    linked = {e.dst for e in g.edges if e.kind == "graph_edge"}
+    roots = {
+        e.src
         for e in g.edges
-        if e.kind in ("route", "task") and e.dst in owner
+        if e.kind == "graph_edge" and e.src not in linked and e.src in owner
+    }
+    ep = sorted(
+        [
+            f"entrypoint: {e.dst}  {e.kind}  {e.file}:{e.line}"
+            for e in g.edges
+            if e.kind in ("route", "task") and e.dst in owner
+        ]
+        + [
+            f"entrypoint: {r}  graph_root  "
+            f"{g.symbols[r].file}:{g.symbols[r].line_start}"
+            for r in roots
+        ]
     )
     ca_files, sk_files = [], []
     for i, (f, ss) in enumerate(syms.items()):
@@ -832,9 +841,8 @@ def _changed(g: Graph, root: Path, base: str) -> set[str] | None:
         # there is no range to diff; upgrade: none — the working tree still counts
         diff = ""
     diff += "\n" + _git(root, *_DIFF_OPTS, "HEAD", "--")
-    untracked = set(
-        _git(root, "ls-files", "--others", "--exclude-standard").splitlines()
-    )
+    listed = _git(root, "ls-files", "-z", "--others", "--exclude-standard")
+    untracked = set(filter(None, listed.split("\0")))
     syms_by_file: dict[str, list[Symbol]] = defaultdict(list)
     for s in g.symbols.values():
         syms_by_file[s.file].append(s)
@@ -871,7 +879,8 @@ def impact(g: Graph, root: Path, base: str = "main") -> tuple[str, int]:
     if len(changed) > IMPACT_MAX:
         return (
             f"changed: {len(changed)} symbols, more than {IMPACT_MAX}; "
-            "pass the branch's real --base",
+            "pass the branch's real --base, or commit or gitignore the "
+            "untracked files (their symbols always count)",
             2,
         )
     hits = sorted(
@@ -885,6 +894,7 @@ def impact(g: Graph, root: Path, base: str = "main") -> tuple[str, int]:
         if e.dst in changed
         and e.src not in changed
         and e.kind not in ("mentions", "imports")
+        and e.file != g.symbols[e.dst].file
     )
     tests = sum(1 for c, t, _, _ in hits if not c and t)
     leads = [f"unconfirmed (name-only): {r}" for c, _, r, _ in hits if c]

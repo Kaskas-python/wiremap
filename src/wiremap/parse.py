@@ -98,11 +98,35 @@ def module_of(rel: str) -> str:
     return rel.removeprefix("src/").rsplit(".", 1)[0].replace("/", ".")
 
 
+def _comment_spans(n: Node, end: int) -> list[tuple[int, int]]:
+    spans = []
+    for c in n.children:
+        if c.start_byte >= end:
+            break
+        if c.type.endswith("comment"):
+            spans.append((c.start_byte, c.end_byte))
+        else:
+            spans += _comment_spans(c, end)
+    return spans
+
+
 def _signature(n: Node) -> str:
     body = n.child_by_field_name("body")
-    text = n.text[: body.start_byte - n.start_byte] if body else n.text
-    sig = " ".join(text.decode(errors="replace").split())
-    return sig[:160] + "…" if len(sig) > 160 else sig
+    if body is None:
+        # ponytail: no body field (TS lexical_declaration, Go type_spec) means the
+        # node is its own value, so the first line is the signature; upgrade: none
+        sig = n.text.decode(errors="replace").splitlines()[0]
+        return sig[:160] + "\u2026" if len(sig) > 160 else sig
+    # ponytail: a `block` starts at the first statement, so every comment before it
+    # — including one trailing a parameter — sits inside the signature span; they
+    # are blanked by tree-sitter node span, not by matching text, so a `#` inside a
+    # string literal is untouched; upgrade: none
+    end = body.start_byte
+    buf = bytearray(n.text[: end - n.start_byte])
+    for a, b in _comment_spans(n, end):
+        buf[a - n.start_byte : b - n.start_byte] = b" " * (b - a)
+    sig = " ".join(buf.decode(errors="replace").split())
+    return sig[:160] + "\u2026" if len(sig) > 160 else sig
 
 
 def _table(name: str, rel: str, i: int, sig: str) -> Symbol:
@@ -317,7 +341,7 @@ SCHEMA = hashlib.sha1(
         + ",".join(f.name for f in dataclasses.fields(RawEdge))
         + "calls:callee-pos"
         + "src-root"
-        + "sig:span-cut"
+        + "sig:span-nocomment-ast"
     ).encode()
 ).hexdigest()[:12]
 

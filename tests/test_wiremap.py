@@ -37,6 +37,7 @@ def test_callers_none_is_explicit(repo, capsys):
     assert code == 0 and "no callers found" in out and "unresolved: 0" in out
     out, _, _ = run(capsys, "--repo", str(repo), "callers", "send_mail")
     assert "name hits without an edge: 1" in out and "app/dispatch.py:2" in out
+    out, _, _ = run(capsys, "--repo", str(repo), "callers", "app.db.get_db"); assert "name hits without an edge: 0" in out
 
 
 def test_pack_fits_15_lines(repo, capsys):
@@ -48,6 +49,7 @@ def test_pack_fits_15_lines(repo, capsys):
     assert "caller: get_db <- app.api.list_orders" in out
     assert "def load( o: Order, ):" in out
     assert "… " not in out
+    assert "graph_root" in run(capsys, "--repo", str(repo), "pack", "--files", "app/graph.py")[0]
     assert out.index("def load( o: Order, ):") > out.index("  def total(self):")
     assert _fit([list("abcdefgh"), list("ijklmnop"), []], 8) == [
         list("abc"), list("ijk"), [],

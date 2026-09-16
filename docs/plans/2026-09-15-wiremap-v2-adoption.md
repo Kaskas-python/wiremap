@@ -505,6 +505,12 @@ became findings. If `tool_packs`/`impact_briefs` stay 0, Fable's compliance is t
 add the brief-lint hook. If they are non-zero and no impact row became a finding on two
 features, remove the review-time integration (shape C).
 
+## Follow-ups (outside this branch)
+- CLI stderr hints (`resolve.py` `uv tool install 'wiremap[...]'`) and CLAUDE.md line 3 still point at a PyPI install that does not exist yet; fix when publishing, or append the git URL (found by /code-review 2026-09-16).
+- `_signature` no-body fallback (Go `type_spec`, TS `lexical_declaration`) keeps a trailing comment on its first line (LOW, cosmetic).
+- `grep` has no unit test (budget at 25/25); covered by the qa-e2e gate scenario 10.
+- Keyword-prefixed shell segments (`do wiremap …`, `then wiremap …`) are not counted by wiremap-metrics (LOW).
+
 ## User-owed items
 1. Plan acceptance (this doc) before the first delegation.
 2. C2 settings.json edits; `git push` of `~/.claude` after the audit GO.
@@ -512,6 +518,6 @@ features, remove the review-time integration (shape C).
 
 ## Ledger
 - Phase A: [x] A1 (review PASS r1; cap 5 production-first) · [x] A2 (review PASS r1; A2.1 floor-then-fill `_fit`, A2.2 global tests-last + one-line task + live assertion) · [x] A3 (review PASS r1; A3.1 `continue` + `…` markers + SCHEMA `sig:span-cut`; A3.2 `IMPACT_PER_SYMBOL = 3`, `_is_test` dirs-only + conventional filenames) · [x] A4 · [x] A5 — A3.1/A3.2/A4/A5 covered by the final branch review
-- Phase B: [x] final review (r1 FAIL: skeleton interleave broke indentation → A2.3 select-by-interleave/render-in-source-order, caller dedupe, .tsx suffixes, real regression assertion; r2 PASS) · [ ] /code-review · [ ] qa-e2e GO · [ ] push
+- Phase B: [x] final review (r1 FAIL: skeleton interleave broke indentation → A2.3 select-by-interleave/render-in-source-order, caller dedupe, .tsx suffixes, real regression assertion; r2 PASS) · [x] /code-review (high: 10 confirmed findings → A6 fix round, then A7 AST comment blanking in `_signature` + SCHEMA `sig:span-nocomment-ast`; scoped reviews r3 FAIL → r4 PASS: impact cross-file guard, name-hits workspace skip + import-line skip, untracked -z, signature comment/no-body fallbacks, pack graph_root entry points, IMPACT_MAX wording, --no-optional-locks, shared _git_grep) · [ ] qa-e2e GO · [ ] push
 - Phase C: [x] C1 (Sonnet stand-in, verbatim) · [x] audit GO (`~/Documents/claude_flow_notes/wiremap-integration/research/2026-09-16-config-audit-v2.md`; ~/.claude commit 3515ab3) · [ ] C2 (user: settings.json jq + `git push`)
 - Phase D: [x] D1 (review PASS r2; six findings fixed; keyword-prefix segments `do|then` uncounted — LOW, accepted) · [x] D2 baseline row (cli_calls 0, briefs 43, tool_packs 0, impact_briefs 0, hook 39/51558 B; `~/Documents/wiremap_notes/baselines/2026-09-15-adoption-baseline.md`) · [ ] D3 (after the next feature)
